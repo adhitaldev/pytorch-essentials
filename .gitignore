@@ -1,0 +1,93 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================
+# PyTorch / ML
+# =========================
+# Model checkpoints & weights
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Training outputs
+checkpoints/
+weights/
+models/
+outputs/
+runs/
+logs/
+tb_logs/
+
+# HuggingFace / Torch caches
+.cache/
+torch_cache/
+.huggingface/
+hf_cache/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# =========================
+# Data
+# =========================
+data/
+datasets/
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pkl
+
+# =========================
+# Experiment tracking
+# =========================
+wandb/
+mlruns/
+comet/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Testing / Coverage
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Misc
+# =========================
+*.log
