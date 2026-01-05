@@ -4,7 +4,7 @@ This repo covers the essentials functionalities/concepts of the Pytorch library.
 
 ## Setup
 
-Create a venv environment and then activate the environment
+Create a Python venv (>=3.12) environment and then activate the environment. 
 
 ```bash
 pytorch-essentials> python -m venv .venv

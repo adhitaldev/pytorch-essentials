@@ -1,3 +1,6 @@
 # Basic libraries
 torch
 torchvision
+transformers
+Pillow
+matplotlib
