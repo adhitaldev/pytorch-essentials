@@ -16,3 +16,7 @@ Install the requirements
 ```bash
 (.venv)pytorch-essentials> pip install -r requirements.txt
 ```
+
+Helpful Pytorch Links
+Documentation: https://docs.pytorch.org/docs/stable/index.html
+All Datasets: https://docs.pytorch.org/vision/stable/datasets.html

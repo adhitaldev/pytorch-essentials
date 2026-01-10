@@ -19,9 +19,18 @@ class SimpleNN(nn.Module):
             nn.Linear(512, 10)
         )
 
+    
     def forward(self, x):
         x = self.flatten(x)
         logits = self.linear_relu_stack(x)
         return logits
 
+def run_nn_example():
+    nn = SimpleNN().to(device)
+
+def get_model():
+    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    using (f"Current Device: {device}")
+    nn = SimpleNN().to(device)
+    return nn
 

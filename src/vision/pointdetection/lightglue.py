@@ -6,11 +6,14 @@ from transformers import AutoImageProcessor, AutoModel
 import torch
 from PIL import Image
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 def run_lightglue_example():
     print(" --- Running Lighglue example --- ")
     img1 = os.getenv("TEST_IMAGE_1", "pytorch-essentials/src/vision/data/test/img1.jpg")
     img2 = os.getenv("TEST_IMAGE_2", "pytorch-essentials/src/vision/data/test/img2.jpg")
+   
     if not os.path.exists(img1) or not os.path.exists(img2):
         print('Test Image 1 or 2 does not exist')
         return 
