@@ -4,10 +4,10 @@
 
 import cv2
 
-from world_model.occlusion_handler.simple_motion_physics.reid import ReIDModel
-from world_model.occlusion_handler.simple_motion_physics.tracker import Tracker
-from world_model.occlusion_handler.simple_motion_physics.ui import UI
-from world_model.occlusion_handler.simple_motion_physics.world import WorldModel
+from reid import ReIDModel
+from tracker import Tracker
+from ui import UI
+from world import WorldModel
 
 
 

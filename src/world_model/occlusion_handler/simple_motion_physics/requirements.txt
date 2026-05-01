@@ -1,6 +1,1 @@
-ultralytics
-torchreid
-torch
-torchvision
-opencv-python
-numpy
+
