@@ -1,13 +1,15 @@
 # =========================================================
 # main.py — PURE ReID TRACKING (FINAL)
-# =========================================================
+# =========================================================``
 
 import cv2
 
-from tracker import Tracker
-from reid import ReIDModel
-from world import WorldModel
-from ui import UI
+from world_model.occlusion_handler.simple_motion_physics.reid import ReIDModel
+from world_model.occlusion_handler.simple_motion_physics.tracker import Tracker
+from world_model.occlusion_handler.simple_motion_physics.ui import UI
+from world_model.occlusion_handler.simple_motion_physics.world import WorldModel
+
+
 
 
 # ---------------------------------------------------------
