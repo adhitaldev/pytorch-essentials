@@ -5,3 +5,9 @@ transformers
 Pillow
 matplotlib
 python-dotenv
+ultralytics
+torchreid
+torch
+torchvision
+opencv-python
+numpy
