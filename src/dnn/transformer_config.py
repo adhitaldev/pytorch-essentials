@@ -5,11 +5,14 @@ class TransformerConfig:
     Basic configuration class for a basic transformer model.
     This contains the hyperparameters and settings for the transformers.
     """
+    # Length of the context window for the transformer.
     block_size = 128
-    n_embd = 256
+    # Length of embedding vector that is learned for each vocabulary token.
+    # Original paper has it at 512.
+    d_model = 256 
     n_head = 8
     n_layer = 6
-    dropout = 0.1
+    dropout = 0.1 # Drop 10% of the neurons
     batch_size = 32
     learning_rate = 3e-4
     max_iters = 3000
