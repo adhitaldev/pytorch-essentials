@@ -16,18 +16,21 @@ def get_batch(data, block_size, batch_size, device):
     avoid holding the whole file in RAM — worth checking 
     you hit memory issues.
     """
-    # Pick batch_size random starting indices into 1D tensor of 
-    # token. 
+    # Pick batch_size random starting indices into 1D tensor of token.
+    # For example: If data = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21], block_size = 2, batch_size = 5, then ix might be [0, 4, 7] and batch_size = 5
+    # high = 11 - 2 = 9, so ix is sampled from [0, 9) and could be [0, 3, 5, 8, 2] for example.
+    high = len(data) - block_size
     ix = torch.randint(len(data) - block_size, (batch_size,))
 
-    # Build input batch: for each random start i, grab a contiguous
+    # Build input batch: for each random start index i, grab a contiguous
     # chunk of length block_size (context window. Stacking gives
     # shape (batch_size, block_size)
-
-    x = torch.stack([data[i:i + block_size] for i in ix])
+    # From above example, x = tensor [[ 1, 3], [ 7, 9], [11, 13], [17, 19], [5, 7]]
+    x = torch.stack([data[i : i + block_size] for i in ix])
 
     # Builds the target batch, the same chunks but shifted one position
     # to the right. For predicting the next token.
+    # From above example, y = tensor [[ 3, 5], [ 9, 11], [13, 15], [19, 21], [7, 9]]
     y = torch.stack([data[i + 1: i + block_size + 1] for i in ix])
 
     # Move both tensors to cpu/gpu
