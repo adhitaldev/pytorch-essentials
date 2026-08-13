@@ -74,7 +74,7 @@ class Head(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # Creates a casual mask that stops each token from seeing future tokens
-        # during attention.
+        # during attention, which makes it an autogressive model.
         # torch.ones (block_size, block_size) creates a square matrix of all 1s
         # torch.tril zeros out the everything above the main diagonal.
         # tril[i][j] where i is current token position and j is position being attended to.
@@ -89,12 +89,34 @@ class Head(nn.Module):
         # ]]
         # The third token (1, 1, 1) can attend to all three tokens, but the second token(1, 1, 0)
         # cannot attend to the third token.
-        # This makes it an autogressiive model, where the prediction for the next token can only
-        # depend on the previous tokens and not the future tokens.
-
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
+        # In the nn.module, the overwritten forward function defines 
+        # the computation that this module performs on input data.
+        # Vectorized implementation of the attention func. defined in section 3.2.1.
+        # Attention (Q, K, V) = softmax(QK^T/sqrt(d_k))V
+        def forward(self, x):
+            # B = Batch Size, T = Time Steps/Sequence Length, C = Channels/Embedding dimensions/Features
+            B, T, C = x.shape
+            k = self.key(x) # (B, T, head_size)
+            q = self.query(x)
+            # QK^T transpose the last two dimensions of k
+            # turning (B, T, head_size) into (B, head_size, T)
+            # C** -0.5 is the 1/sqrt(d_k) scaling factor
+            wei = q @ k.transpose(-2, -1) * C**-0.5
 
+            # Casual masking
+            wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+
+            # Apply softmax
+            wei = torch.nn.functional.softmax(wei, dim=-1)
+
+            # Apply dropout
+            wei = self.dropout(wei)
+
+            v = self.value(x)
+            out = wei @ v # (B, T, head_size)
+            return out
 
 class Block(nn.Module):
     """
