@@ -1,10 +1,9 @@
 # PYTORCH ESSENTIALS
-
-This repo covers the essentials functionalities/concepts of the Pytorch library. This is to be used for learning purposes.
+This repo covers the essentials functionalities/concepts of the Pytorch library along with some implementations. This is to be used for learning purposes and not as the end production code.
 
 # Interesting Modules
 ## src/dnn/transformer 
-This is a basic setup setup for a language based transformer, closely based on the seminal paper "Attention is All You Need". It is highly annotated with examples, maths, and comments and is to be used as a 
+This is a basic setup for a language based transformer, closely based on the seminal paper "Attention is All You Need". It is highly annotated with examples, maths, and comments and is to be used as a 
 learning tool to understand transformers, tokenizer, and the attention framework. Studying the paper side by side while playing around with this
 is highly recommended.
 
