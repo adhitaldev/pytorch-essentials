@@ -20,6 +20,5 @@ def get_tensor_from_csv(csv_file_path: str, delimiter: str = ",", has_header: bo
                 has_header = False
                 continue
             row = line.strip().split(delimiter)
-            print(row)
             data.append([float(x) for x in row])
     return torch.tensor(data, dtype=torch.float32)
