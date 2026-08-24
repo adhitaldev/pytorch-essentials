@@ -2,13 +2,19 @@
 This repo covers the essentials functionalities/concepts of the Pytorch library along with some implementations. This is to be used for learning purposes and not as the end production code.
 
 # Interesting Modules
-## src/pytorch
+## src/torch_fundamentals
 Provides various tutorials on pytorch - compiled mostly from the Coursera's 'Pytorch for Deep Learning' specialization course by Laurence Moroney. It contains fundamentals to advanced Pytorch topics.
 
-## src/dnn/transformer 
+## src/dnn/
+It has implementations of some neural networks while emphasizing documentation and learnability from the written code.
+
+[transformer](./src/dnn/transformer/)
 This is a basic setup for a language based transformer, closely based on the seminal paper "Attention is All You Need". It is highly annotated with examples, maths, and comments and is to be used as a 
 learning tool to understand transformers, tokenizer, and the attention framework. Studying the paper side by side while playing around with this
 is highly recommended. Still a WIP...the model is not ready yet.
+
+[MNIST Digit Classifier](./src/dnn/mnist/)
+This implements a image classifier for digits (0-9) based on the MNIST dataset.
 
 ## src/pyessentials
 Contains some essentials and often overlooked basic topics in Python like classes,concurreny, decorator and numbers.
