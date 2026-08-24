@@ -6,3 +6,5 @@ Pillow
 matplotlib
 python-dotenv
 pytest
+ipython
+pandas
