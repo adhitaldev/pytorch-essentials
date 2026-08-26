@@ -149,7 +149,9 @@ def train_epoch(model, train_loader, loss_function, optimizer, device):
         running_loss += loss_value
 
         # Accuracy metrics for the current batch
-        _, predicted_indices = output.max(1) # Which label got the highest item
+        # output is tensor with shape(batch_size, num_classes). The following line
+        # gets the index with the higest value.
+        _, predicted_indices = output.max(1)
         batch_size = targets.size(0) # How many images are in this batch
         total_predictions += batch_size
         correct_predictions += predicted_indices.eq(targets).sum().item()

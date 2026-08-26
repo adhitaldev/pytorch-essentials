@@ -111,6 +111,8 @@ load it for training and evaluation.
         output = model (data)
 ```
 
+For custom dataset with images, refer to [data_management](../torch_fundamentals/data_management.py) script
+
 ## 5. Device Management 
 Every model or tensor lives on a device - whether GPU or CPU. These need to be
 told where to live. Model or tensors on different devices can destablize or crash the training/model. Default device is CPU for PyTorch.
