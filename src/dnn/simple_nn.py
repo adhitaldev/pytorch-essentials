@@ -8,7 +8,10 @@ If there is no accelerator, CPU is used.
 from torch import nn
 
 class SimpleNN(nn.Module):
+    # Init defines the layers
     def __init__(self):
+        # Sets up system to track learnable parameters
+        # Base class creates it
         super().__init__()
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
@@ -19,7 +22,7 @@ class SimpleNN(nn.Module):
             nn.Linear(512, 10)
         )
 
-    
+    # Forward defines how the data flows through it
     def forward(self, x):
         x = self.flatten(x)
         logits = self.linear_relu_stack(x)
