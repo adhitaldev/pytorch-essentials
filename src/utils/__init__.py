@@ -1,2 +1,3 @@
 
 from .csv_to_tensor import get_tensor_from_csv
+from .image_visualizer import visualize_tensor_image
