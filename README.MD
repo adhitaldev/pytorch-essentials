@@ -8,6 +8,10 @@ Provides various tutorials on pytorch - compiled mostly from the Coursera's 'Pyt
 ## src/dnn/
 It has implementations of some neural networks while emphasizing documentation and learnability from the written code.
 
+## src/dnn/cnn
+It contains sample implementations of different convolutional neural networks. 
+[CIFAR CNN](./src/dnn/cnn/cifar_cnn.py)
+
 [transformer](./src/dnn/transformer/)
 This is a basic setup for a language based transformer, closely based on the seminal paper "Attention is All You Need". It is highly annotated with examples, maths, and comments and is to be used as a 
 learning tool to understand transformers, tokenizer, and the attention framework. Studying the paper side by side while playing around with this
