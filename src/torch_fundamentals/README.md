@@ -32,20 +32,19 @@ possible answers (example: image classification). It punishes overconfident wron
 nn.CrossEntropyLoss()
 ```
 
-##2.2 Less common loss functions
+## 2.2 Less common loss functions
 __L1Loss__ measures average absolute difference - regression that's less sensitive to outliers.
 ```
 nn.L1Loss()
 ```
 
-__BCEWithLogitsLoss__ combines of sigmoid activation layer and binary cross entropy into a single, and is useful for binary classification.
+__BCEWithLogitsLoss__ combines sigmoid activation layer and binary cross entropy into a single, and is useful for binary classification.
 class.
 ```
 nn.BCEWithLogitsLoss()
 ``` 
 
-__Negative Log Likelihood__ function performance of model whose input consists
-of log probabilities for each class i.e. when LogSoftMax activation is used.It's useful for multi-class classification.
+__Negative Log Likelihood__ computes performance of model whose input consists of log probabilities for each class i.e. when LogSoftMax activation is used. It's useful for multi-class classification.
 ```
 nn.NLLLoss() 
 ```
