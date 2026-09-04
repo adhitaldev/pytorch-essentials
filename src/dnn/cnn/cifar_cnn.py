@@ -58,7 +58,8 @@ def prepare_data(batch_size=64):
 class CifarCNN(nn.Module):
     """
     Uses conv filter and maxpooling layers for feature extraction
-    from images.
+    from images. This is sequential by design as the intention is
+    to learn from it.
     """
     def __init__(self, num_classes):
         super(CifarCNN, self).__init__()

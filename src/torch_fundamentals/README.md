@@ -144,7 +144,7 @@ print(next(model.parameters().device))
 Be careful of GPU RAM availability as well when moving objects to it. Batch size of 32-64 is a good starting point.
 
 
-## 6. Usage Notes Summary
+## 6. General setup and notes
 ``` 
 loss = nn.MSELoss(model.parameters(), lr=0.01) # Measures the error between prediction and groundtruth
 ```
@@ -174,6 +174,89 @@ for inputs, targets in dataloader():
     loss.backward()
     optimizer.step()
 ```
+
+## 7 Sequential vs Module
+With __nn.Sequential__, the mathematical operations are performed in sequence without
+much flexibility to change. 
+For flexibility, PyTorch allows different parts/layers of the neural
+network to be defined as modules with __nn.Module__.
+__nn.Sequential__ is a special case of __nn.Module__ that chains layers together.
+
+## 8 Dynamic Computation Graph
+Computations graph track the mathematical operations as graph so they can be traced back from the end during back propogation. PyTorch builds this graph on the fly - hence its dynamic. Graph is defined by the actual execution path the code takes, defined in the forward() code. This allows for immense flexibility during model iteration and experimentation.
+
+## Model Inspection and Debugging
+A print statement will display the high level layers of the model. To dig deeper, these tools can be used:
+
+```
+# Getting the total number of parameters of a model:
+total_params = sum(param.numel() for param in model.parameters())
+```
+
+```
+# Finding out exactly where each set of parameters live
+for name, param in model.named_parameters():
+    print(f"{name}: {param.shape}")
+
+The upper code may print something like this:
+fc1.weight: torch.Size([512, 2048]) #Weights for 512 outputs and 2048 inputs for that layer. Important to note that Torch organizes the weight around the output.
+```
+```
+# To only show top level components - if a block has nested sequential/modules, it won't show it
+for name, module in model.named_children():
+   print(name, module)
+```
+```
+# Get the parameter shape from layers
+for param in model.parameters():
+   print(param.shape)
+```
+```
+# Printing shape of weights of a layer
+print(model.fc1.weight.shape)
+```
+
+```
+Getting statistics of activations to ensure they are in a reasonable range:
+
+class SimpleCNN2SeqDebug(SimpleCNN2Seq):
+    def __init__(self):
+        super().__init__()
+  
+    def get_statistics(self, activation):
+        mean = activation.mean().item()
+        std = activation.std().item()
+        min_val = activation.min().item()
+        max_val = activation.max().item()
+
+        print(f" Mean: {mean}")
+        print(f" Std: {std}")
+        print(f" Min: {min_val}")
+        print(f" Max: {max_val}")
+        return mean, std, min_val, max_val
+
+    def forward(self, x):
+        features = self.conv_block(x)
+        x = torch.flatten(features, start_dim=1)  # Flatten all dimensions except batch
+
+        print("After conv_block, the activation statistics are:")
+        self.get_statistics(features)
+
+        x = self.fc_block(x)
+        print("After fc_block, the activation statistics are:")
+        self.get_statistics(x)
+        return x
+
+
+```
+
+
+
+
+
+
+
+
 
 
 
