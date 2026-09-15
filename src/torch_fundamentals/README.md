@@ -72,7 +72,7 @@ small change. It scales the gradient first using the learning rate. A good learn
 sgd_optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 ```
 
-__Adam__ optimizer scales the learning rate adaptively for each individual parameter. It's popular reliable, flexible, and often faster than other optimizers.
+__Adam__ stands for Adaptive Moment Adjustment and scales the learning rate adaptively for each individual parameter. It's popular reliable, flexible, and often faster than other optimizers.
 ```
 adam_optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 

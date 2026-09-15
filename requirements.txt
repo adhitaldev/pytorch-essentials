@@ -1,6 +1,7 @@
 # Basic libraries
 torch
 torchvision
+torchmetrics
 transformers
 Pillow
 matplotlib
@@ -9,3 +10,4 @@ pytest
 ipython
 pandas
 scipy
+optuna

@@ -6,6 +6,7 @@ color images for 100 different classes.
 import os
 import torch
 import torchvision
+import torchmetrics
 from PIL import Image
 import torch.nn as nn
 import torch.optim as optim
@@ -181,12 +182,44 @@ def training_loop(model, train_loader, val_loader, loss_func, optimizer, num_epo
     metrics = [train_losses, val_losses, val_accuracies]
     return model, metrics
 
+def evaluate_with_torchmetrics(model, val_loader, device, num_classes=10):
+    print(f" Evaluating the model with torch metrics ")
+    model.eval()
+
+    # Define the metrics
+    accuracy_metric = torchmetrics.Accuracy(task="multiclass", num_classes=num_classes, average="macro").to(device)
+    precision_metric = torchmetrics.Precision(task="multiclass", num_classes=num_classes, average="macro").to(device)
+    recall_metric = torchmetrics.Recall(task="multiclass", num_classes=num_classes, average="macro").to(device)
+    f1score_metric = torchmetrics.F1Score(task="multiclass", num_classes=num_classes, average="macro").to(device)
+
+    # Start the evaluation and update the metrics
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+            accuracy_metric.update(predicted, labels)
+            precision_metric.update(predicted, labels)
+            recall_metric.update(predicted, labels)
+            f1score_metric.update(predicted, labels)
+    
+    accuracy = accuracy_metric.compute().item()
+    precision = precision_metric.compute().item()
+    recall = recall_metric.compute().item()
+    f1score = f1score_metric.compute().item()
+
+    print(f"METRICS Accuracy: {accuracy}| Precision: {precision}|Recall: {recall}|F1: {f1score} ")
+    return accuracy, precision, recall, f1score
+
+
 if __name__== "__main__":
     print("------ CIFAR 100 Conv. Classifier ------")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Current Device: {device}")
 
     train_loader, val_loader, label_classes = prepare_data(64)
+    total_classes = len(label_classes)
     print(f"Total Train Batches: {len(train_loader)} Total Test Batches: {len(val_loader)}")
     print(f"Label Classes: {label_classes} Total Classes: {len(label_classes)}")
     
@@ -205,9 +238,10 @@ if __name__== "__main__":
     loss_func = nn.CrossEntropyLoss()
     optimizer = optim.Adam(cnn_model.parameters(), lr=0.001)
 
-    num_epochs = 10
+    num_epochs = 1
     print(f"Training and Evaluation loop started for {num_epochs} epochs...Please wait for updates")
     training_loop(cnn_model, train_loader, val_loader, loss_func, optimizer, num_epochs, device)
 
+    evaluate_with_torchmetrics(cnn_model, val_loader, device, total_classes)
 
 
