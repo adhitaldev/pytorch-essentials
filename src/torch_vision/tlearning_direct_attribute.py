@@ -3,11 +3,13 @@ Example of a transfer learning using the ResetNet18 model for image classificati
 the direct attribute of the model.
 Resnet was trainied on ImageNet dataset but in this case it will be transfer learned to classify 
 the CIFAR10 dataset. 
+NOTE: This is not a fully functional example but demostrates the basic concepts of transfer
+learning using only the clasifier head of the model.
 """
+
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision import models as vmodels
-
 
 def init_model():
     resnet18_model = vmodels.resnet18(weights='IMAGENET1K_V1')
