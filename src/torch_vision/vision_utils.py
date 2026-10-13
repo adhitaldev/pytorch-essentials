@@ -1,9 +1,11 @@
 """
 Helpful utility functions for vision tasks.
 """
+import math
 import torch
 import torchvision.utils as vutils
-from PIL import Image, ImageDraw
+from torchvision.transforms.functional import to_pil_image
+from PIL import Image, ImageDraw, ImageOps
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -138,6 +140,54 @@ def visualize_tensor_image(image_tensor=None, label="Unknown", mean=None, std=No
     plt.title(label)
     plt.axis("off")
     plt.show()
+
+
+def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=4, bg=(255, 255, 255)):
+    """
+    Takes in a list of image tensors and draws them in a grid evenly.
+    """
+    """
+    Arrange a list of image tensors into an evenly spaced grid.
+
+    images:    list of tensors shaped (C, H, W) or (H, W). Either uint8 in
+               [0, 255] or float in [0, 1]. Sizes may differ.
+    cols:      number of columns (default: roughly square grid)
+    cell_size: (width, height) of every cell (default: size of the largest image)
+    padding:   pixels between cells and around the border
+    bg:        background color
+    Returns a PIL.Image.
+    """
+    if len(images) == 0:
+        raise ValueError("images is empty")
+
+    n = len(images)
+    cols = cols or math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+
+    # Tensor -> PIL (handles uint8 and float [0,1]); force RGB so mixed
+    # grayscale/color inputs paste cleanly
+    pil_imgs = [to_pil_image(img.detach().cpu()).convert("RGB") for img in images]
+
+    if cell_size is None:
+        cell_w = max(im.width for im in pil_imgs)
+        cell_h = max(im.height for im in pil_imgs)
+    else:
+        cell_w, cell_h = cell_size
+
+    grid_w = cols * cell_w + (cols + 1) * padding
+    grid_h = rows * cell_h + (rows + 1) * padding
+    grid = Image.new("RGB", (grid_w, grid_h), bg)
+
+    for i, im in enumerate(pil_imgs):
+        r, c = divmod(i, cols)
+        # Scale to fit the cell while keeping aspect ratio
+        im = ImageOps.contain(im, (cell_w, cell_h))
+        # Center inside the cell
+        x = padding + c * (cell_w + padding) + (cell_w - im.width) // 2
+        y = padding + r * (cell_h + padding) + (cell_h - im.height) // 2
+        grid.paste(im, (x, y))
+
+    grid.show()
 
 
 
