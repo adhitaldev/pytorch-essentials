@@ -22,6 +22,7 @@ def prepare_obj_det_data(
     Prepares data based on the batch size, and training and validation paths.
     Returns data loaders for training and validation.
     """
+    print("\n--------------- PREPARING DATA IN PROGRESS ----------------")
     print(f"Train Images Path: {train_images_path}")
     print(f"Train Annotations Path: {train_annotations_path}")
     print(f"Validate Images Path: {validation_images_path}")
@@ -70,6 +71,8 @@ def start_obj_det_training_validation(
   """
   Starts the training and validation loop with the given parameters
   """
+  print("\n--------------- TRAINING & VALIDATION IN PROGRESS ----------------")
+
   model = model.to(device)
   best_map = 0.0
   for epoch in range(num_epochs): 
@@ -79,7 +82,8 @@ def start_obj_det_training_validation(
     metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
 
     print(f"Epoch {epoch + 1}: train {train_loss:.4f} | val {val_loss:.4f} | "
-          f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}")
+          f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}\n")
+
     
     # Saves the best model
     if metrics["map"] > best_map:
@@ -110,7 +114,7 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
       optimizer.step()
       running_train_loss += loss.item()
       images_so_far += len(images)
-      pbar.set_postfix(images=f" {images_so_far}/{len(train_loader) * batch_size}", avg_loss=f"{running_train_loss/ idx:.4f}")
+      pbar.set_postfix(images=f" {images_so_far}/{len(train_loader.dataset)}", avg_loss=f"{running_train_loss/ idx:.4f}")
     return running_train_loss / len(train_loader)
 
 @torch.no_grad()
@@ -142,7 +146,7 @@ def evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size):
           for t in targets
       ]
       metric.update(preds, gts)
-      pbar.set_postfix(images=f" {images_so_far}/{len(val_loader) * batch_size}")
+      pbar.set_postfix(images=f" {images_so_far}/{len(val_loader.dataset)}")
   results = metric.compute()
   return {k: (v.tolist() if v.ndim else v.item()) for k, v in results.items()}
 

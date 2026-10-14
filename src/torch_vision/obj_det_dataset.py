@@ -27,7 +27,7 @@ class ObjectDetectionDataset(Dataset):
         self.transforms = transforms
         self.class_to_labels = class_to_labels
 
-        print(f"--- Creating Object detection dataset ---")
+        print(f"\n--- Creating object detection dataset ---")
         print(f"Image dir: {self.images_dir}")
         print(f"Annotation dir: {self.annotations_dir}")
         print(f"Transforms: {self.transforms}")
