@@ -76,7 +76,7 @@ def start_obj_det_training_validation(
     train_loss = train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size)
     # Evaluation
     val_loss = get_validation_loss(model, val_loader, device)
-    metrics = evaluate_mAP(model, val_loader, device)
+    metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
 
     print(f"Epoch {epoch + 1}: train {train_loss:.4f} | val {val_loss:.4f} | "
           f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}")
@@ -94,6 +94,7 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
   # Training
     model.train()
     running_train_loss = 0
+    images_so_far = 0
     pbar = tqdm.tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Train]")
     for idx, (images, targets) in enumerate(pbar, start=1):
       images = [img.to(device) for img in images]
@@ -108,18 +109,22 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
       loss.backward()
       optimizer.step()
       running_train_loss += loss.item()
-      pbar.set_postfix(images=f"{batch_size * (idx + 1)}/{len(train_loader) * batch_size}", avg_loss=f"{running_train_loss/ idx:.4f}")
+      images_so_far += len(images)
+      pbar.set_postfix(images=f" {images_so_far}/{len(train_loader) * batch_size}", avg_loss=f"{running_train_loss/ idx:.4f}")
     return running_train_loss / len(train_loader)
 
 @torch.no_grad()
-def evaluate_mAP(model, val_loader, device):
+def evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size):
   """
   Evaluates the mAP scores of the dataset provided.
   """
   model.eval()
   metric = MeanAveragePrecision(box_format="xyxy", iou_type="bbox", class_metrics=True)
-  for images, targets in tqdm.tqdm(val_loader, desc="[Validate]"):
+  pbar = tqdm.tqdm(val_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Validate]")
+  images_so_far = 0
+  for images, targets in pbar:
       images = [img.to(device) for img in images]
+      images_so_far += len(images)
       outputs = model(images)   # list of dicts: boxes, labels, scores
       preds = [
           {
@@ -137,6 +142,7 @@ def evaluate_mAP(model, val_loader, device):
           for t in targets
       ]
       metric.update(preds, gts)
+      pbar.set_postfix(images=f" {images_so_far}/{len(val_loader) * batch_size}")
   results = metric.compute()
   return {k: (v.tolist() if v.ndim else v.item()) for k, v in results.items()}
 
