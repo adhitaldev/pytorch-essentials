@@ -91,3 +91,4 @@ htmlcov/
 # Misc
 # =========================
 *.log
+.env.object_detection

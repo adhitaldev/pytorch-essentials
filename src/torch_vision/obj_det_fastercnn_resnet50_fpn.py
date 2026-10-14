@@ -15,15 +15,13 @@ import ast
 import torchvision.models as vmodels
 import torchvision.transforms as transforms
 from torchvision.transforms import v2 as T
-import torchvision.utils as vutils
-from torch.utils.data import DataLoader
 from torchvision.io import decode_image
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from PIL import Image
 from src.utils.model_utils import get_model_classes_from_weights_meta
 from src.torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor, display_random_dataset_images
-from .object_detection_dataset import create_voc_dataset
 from dotenv import load_dotenv
+from .obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss
 
 # Use this environment file in the torch_vision package for environment variables
 env_file = f".env.object_detection"
@@ -37,6 +35,7 @@ def load_model():
     return model, classes
 
 def modify_model(model, num_classes: int):
+    print(f"Modifying fastercnn_resnet50_fpn to output {num_classes} classes")
     # Freeze all the params
     for params in model.parameters():
         params.requires_grad = False
@@ -51,70 +50,31 @@ def modify_model(model, num_classes: int):
         params.requires_grad = True
     return model
 
-def prepare_data(
-                 train_images_path, 
-                 train_annotations_path,
-                 validation_images_path, 
-                 validation_annotations_path,
-                 class_labels: 'dict',
-                 batch_size=64,):
-  """
-  Prepares data based on the batch size, and training and validation paths.
-  Returns data loaders for training and validation.
-  """
-  train_transforms =  T.Compose([
-      T.RandomHorizontalFlip(),
-      T.RandomRotation(degrees=15),
-      T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1),
-      T.Resize(256),
-      T.CenterCrop(224)
-  ])
-
-  validate_transforms = T.Compose([
-    T.ToTensor()
-  ])
-
-  train_dataset = create_voc_dataset(images_path=train_images_path, annotations_path=train_annotations_path, class_to_labels=class_labels, transforms=train_transforms)
-  validate_dataset = create_voc_dataset(images_path=validation_images_path, annotations_path=validation_annotations_path, class_to_labels=class_labels, transforms=validate_transforms)
-
-  # Data loader
-  train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-  validate_loader = DataLoader(validate_dataset, batch_size=batch_size, shuffle=False)
-
-  return train_dataset, validate_dataset, train_loader, validate_loader
-
-
 if __name__=="__main__":
-    # Load the model and define the classes to detect
-    model, classes = load_model()
-
-    # Replace the box predictor for this model
-    total_classes = 4
-    modify_model(model, total_classes)
-
     if os.path.exists(env_file):
       load_dotenv(env_file)
     else:
       load_dotenv()
+      
+    # Load the model and define the classes to detect
+    model, classes = load_model()
+
+    # Replace the box predictor for this model
+    class_labels = ast.literal_eval(os.getenv("OBJ_DETECTION_CLASS_LABELS"))
+    total_classes = len(class_labels) + 1 # background is zero
+    modify_model(model, total_classes)
 
     print("Loading the environment parameters for the fastercnn_restnet50_fpn model training ...")
     train_images_path = os.getenv("OBJ_DETECTION_TRAIN_IMAGES_PATH")
     train_annotations_path = os.getenv("OBJ_DETECTION_TRAIN_ANNOTATIONS_PATH")
     validate_images_path = os.getenv("OBJ_DETECTION_VALIDATE_IMAGES_PATH")
     validate_annotations_path = os.getenv("OBJ_DETECTION_VALIDATE_ANNOTATIONS_PATH")
-    class_labels = ast.literal_eval(os.getenv("OBJ_DETECTION_CLASS_LABELS"))
     num_samples= int(os.getenv("OBJ_DETECTION_NUM_SAMPLES", "10"))
     batch_size = int(os.getenv("OBJ_DETECTION_BATCH_SIZE", "64"))
-   
-    print(f"Train Images Path: {train_images_path}")
-    print(f"Train Annotations Path: {train_annotations_path}")
-    print(f"Validate Images Path: {validate_images_path}")
-    print(f"Validate Annotations Path: {validate_annotations_path}")
-    print(f"Class labels: {class_labels}")
-    print(f"Batch size: {batch_size}")
+  
     print(f"Total display samples: {num_samples}")
 
-    train_dataset, validate_dataset, train_loader, validate_loader = prepare_data(
+    train_dataset, validate_dataset, train_loader, val_loader = prepare_obj_det_data(
                                                                                   train_images_path=train_images_path, 
                                                                                   train_annotations_path=train_annotations_path,
                                                                                   validation_images_path=validate_images_path, 
@@ -122,14 +82,31 @@ if __name__=="__main__":
                                                                                   class_labels=class_labels,
                                                                                   batch_size=batch_size
                                                                                   )
-    print(f"Total training samples {len(train_dataset)}")
-    print(f"Train dataloader created with {batch_size}")
-    print(f"Total validation samples {len(validate_dataset)}")
-    print(f"Validation dataloader created with {batch_size}")
+
     # Visualize the images
     id_to_names = {v:k for k, v in class_labels.items()}
     display_random_dataset_images(train_dataset, id_to_names, num_images=num_samples, title=f"renet50fpn: {num_samples} Training Samples")
     display_random_dataset_images(validate_dataset, id_to_names, num_images=num_samples, title=f"renet50fpn: {num_samples} Validation Samples")
+
+    # Training and validation
+    print(f"Starting training and validation ...")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    num_epochs = int(os.getenv("OBJ_DETECTION_NUM_EPOCHS", 2))
+    learning_rate = 1e-5
+    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+
+    print(f"Total Epochs: {num_epochs} Learning rate: {learning_rate}")
+
+    start_obj_det_training_validation(
+                                  model,
+                                  train_loader, 
+                                  val_loader,
+                                  optimizer,
+                                  num_epochs,
+                                  device,
+                                  batch_size=batch_size,
+                                  model_out_path="fasterrcnn_resnet50_fpn_best.pth"
+                                )
 
 
     # Test the model with a test image

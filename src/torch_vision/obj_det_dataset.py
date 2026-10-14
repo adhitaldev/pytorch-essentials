@@ -76,7 +76,7 @@ class ObjectDetectionDataset(Dataset):
         boxes, labels = [], []
         for obj in root.findall('object'):
             label = obj.find('name').text
-            label_id = self.class_to_labels.get(label, 'Unknown')
+            label_id = self.class_to_labels[label]
             bbox = obj.find('bndbox')
             xmin = float(bbox.find('xmin').text)
             ymin = float(bbox.find('ymin').text)
@@ -112,7 +112,7 @@ class ObjectDetectionDataset(Dataset):
        
          # Area calculation after transforms- required by some architectures
         bxxs = target["boxes"]
-        target["area"] = (bxxs[:, 2] - bxxs[:, 0]) * (bxxs[: , 3] - bxxs[:, 1]) if len(bxxs) > 0 else torch.zeros((0, ), tdype=torch.float32)
+        target["area"] = (bxxs[:, 2] - bxxs[:, 0]) * (bxxs[: , 3] - bxxs[:, 1])
 
         return image, target
         
