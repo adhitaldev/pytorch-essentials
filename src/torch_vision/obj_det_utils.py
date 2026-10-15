@@ -6,6 +6,7 @@ import os
 import random
 import torch
 import tqdm
+import pandas as pd
 from datetime import datetime
 from torch.utils.data import DataLoader
 from torchmetrics.detection import MeanAveragePrecision
@@ -13,6 +14,7 @@ from torchvision.transforms import v2 as T
 import  torchvision.utils as vutils
 from .obj_det_dataset import create_voc_dataset
 from .vision_utils import gridify_multiple_tensor_images
+from ..utils.model_utils import write_to_csv
 
 def prepare_obj_det_data(
                  train_images_path, 
@@ -98,8 +100,10 @@ def start_obj_det_training_validation(
             Score Threshold: {score_threshold}\n
             """)
 
-  model_path, artifacts_path = _create_output_infrastructure(output_path, model_name)
+  model_path, artifacts_path, analytics_path, epoch_map_path = _create_output_infrastructure(output_path, model_name)
   id_to_names = {v:k for k, v in class_labels.items()}
+
+  # Setting up the analyics path
   
   # Display samples of dataset images 
   display_random_dataset_images(train_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
@@ -113,13 +117,21 @@ def start_obj_det_training_validation(
       comparison_indexes = [random.randint(0, len(val_loader.dataset) - 1) for _ in range(comparison_images)]
 
   for epoch in range(num_epochs): 
-    train_loss = train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size)
+    train_loss = train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path)
     # Evaluation
     val_loss = get_validation_loss(model, val_loader, device)
     metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
 
     print(f"Epoch {epoch + 1}: train {train_loss:.4f} | val {val_loss:.4f} | "
           f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}\n")
+    epoch_map_results = {
+                            "Epoch": [epoch + 1],
+                            "TrainingLoss": [train_loss],
+                            "ValidationLoss": [val_loss],
+                            "mAP": [metrics['map']],
+                            "map_0.5": [metrics['map_50']]}
+
+    write_to_csv(epoch_map_results, epoch_map_path)
 
     # Saves the best model
     if metrics["map"] > best_map:
@@ -131,7 +143,7 @@ def start_obj_det_training_validation(
     display_groundtruth_prediction_comparision(model, device, val_loader.dataset, comparison_indexes, epoch, id_to_names, score_threshold, artifacts_path)
 
 
-def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size):
+def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path):
     """
     Trains a single epoch of a object detection model
     """
@@ -155,6 +167,11 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
       running_train_loss += loss.item()
       images_so_far += len(images)
       pbar.set_postfix(images=f" {images_so_far}/{len(train_loader.dataset)}", avg_loss=f"{running_train_loss/ idx:.4f}")
+
+      # Save the analytics
+      if analytics_path:
+        write_to_csv({"Epoch": [epoch + 1], "Step": [idx], "Lr": optimizer.param_groups[0]['lr'], "Loss": [loss.item()]}, analytics_path)
+      #print(f"Epoch: {epoch + 1} Step: {idx + 1} Loss: {loss.item()} ")
     return running_train_loss / len(train_loader)
 
 @torch.no_grad()
@@ -296,10 +313,12 @@ def _create_output_infrastructure(output_path, model_name):
     folder_name = datetime.now().strftime(f"%Y%m%d_%H%M") + "_" + model_name
     final_path = os.path.join(output_path, folder_name)
     model_path = os.path.join(final_path, model_name + ".pt")
+    analytics_path = os.path.join(final_path, "analytics.csv")
+    epoch_map_path = os.path.join(final_path, "mAP.csv")
     artifacts_path = os.path.join(final_path, "artifacts")
     if not os.path.exists(artifacts_path):
         os.makedirs(artifacts_path)
-    return model_path, artifacts_path
+    return model_path, artifacts_path, analytics_path, epoch_map_path
 
 def _collate(batch):
   """
