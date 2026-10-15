@@ -143,7 +143,7 @@ def visualize_tensor_image(image_tensor=None, label="Unknown", mean=None, std=No
     plt.show()
 
 
-def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=4, bg=(255, 255, 255), title=""):
+def gridify_multiple_tensor_images(images, cols=None, cell_size=None, padding=4, bg=(255, 255, 255), title=""):
     """
     Takes in a list of image tensors and draws them in a grid evenly.
     """
@@ -157,7 +157,7 @@ def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=
     padding:   pixels between cells and around the border
     bg:        background color
     title:     optional title to draw above the grid
-    Returns a PIL.Image.
+    returns the PIL.Image
     """
     
     if len(images) == 0:
@@ -211,33 +211,7 @@ def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=
         y = title_h + padding + r * (cell_h + padding) + (cell_h - im.height) // 2
         grid.paste(im, (x, y))
 
-    grid.show()
-
-def display_random_dataset_images(dataset, id_to_names, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"]):
-    """
-    Displays a grid of 'num_images' random images from the given 'dataset'
-    and adds a title and padding if requested.
-    """
-    if not dataset:
-        print(f"{display_random_dataset_images.__name__}No random images to draw")
-        return
-
-    indexes = [random.randint(0, len(dataset) - 1) for _ in range(num_images)]
-    img_tensors = []
-
-    for idx in indexes:
-        image, target = dataset[idx]
-        # print(f"Info {image.dtype}, {image.min().item()}, {image.max().item()}")
-        labels = ["Unknown" for _ in range(len(targets["labels"]))] if not id_to_names else [id_to_names[int(l)] for l in target["labels"]]
-        annotated_img = vutils.draw_bounding_boxes(
-            image=image, 
-            boxes=target["boxes"],
-            colors=class_colors,
-            labels=labels,
-            width=3
-        )
-        img_tensors.append(annotated_img)
-    visualize_multiple_tensor_images(img_tensors, padding=padding, title=title)
+    return grid
 
 
 

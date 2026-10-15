@@ -10,7 +10,6 @@ from PIL import Image
 from torchvision.datasets import VOCDetection
 from xml.etree import ElementTree as ET
 from pathlib import Path
-from .vision_utils import visualize_tensor_image, visualize_multiple_tensor_images, display_random_dataset_images
 from torchvision.transforms import v2 as T
 
 img_extensions =('.jpg', 'jpeg', '.png', 'jpeg')
@@ -126,7 +125,7 @@ def create_voc_dataset(images_path: 'str', annotations_path: 'str', class_to_lab
     return dataset
 
 if __name__=="__main__":
-    # Uses the object detection environment variables to create a sample dataset and display it
+    # Uses the object detection environment variables to create a sample dataset
     from dotenv import load_dotenv
     import ast
     env_file = ".env.object_detection"
@@ -146,11 +145,8 @@ if __name__=="__main__":
         transforms.Resize(256),
         transforms.CenterCrop(224),
     ])
+
     ds = create_voc_dataset(imgs_path, annos_path, class_to_labels, transforms=img_transforms)
     print(f"Total image data: {len(ds)}")
-
-    id_to_names = {v:k for k, v in class_to_labels.items()}
-    display_random_dataset_images(ds, id_to_names, num_images=num_samples, title="Object Detection dataset sample run")
- 
 
 

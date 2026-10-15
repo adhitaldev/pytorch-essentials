@@ -19,9 +19,9 @@ from torchvision.io import decode_image
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from PIL import Image
 from src.utils.model_utils import get_model_classes_from_weights_meta
-from src.torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor, display_random_dataset_images
+from src.torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor
 from dotenv import load_dotenv
-from .obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss
+from .obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss, display_random_dataset_images
 
 # Use this environment file in the torch_vision package for environment variables
 env_file = f".env.object_detection"
@@ -83,11 +83,7 @@ if __name__=="__main__":
                                                                                   batch_size=batch_size
                                                                                   )
 
-    # Visualize the images
-    id_to_names = {v:k for k, v in class_labels.items()}
-    display_random_dataset_images(train_dataset, id_to_names, num_images=num_samples, title=f"renet50fpn: {num_samples} Training Samples")
-    display_random_dataset_images(validate_dataset, id_to_names, num_images=num_samples, title=f"renet50fpn: {num_samples} Validation Samples")
-
+ 
     # Training and validation
     print(f"Starting training and validation ...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -95,17 +91,23 @@ if __name__=="__main__":
     learning_rate = 1e-5
     optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 
-    print(f"Total Epochs: {num_epochs} Learning rate: {learning_rate}")
+    num_comparison_images = int(os.getenv("OBJ_DETECTION_COMPARISION_SAMPLES"), 5)
+    score_threshold = float(os.getenv("OBJ_DETECTION_SCORE_THRESHOLD"))
+    output_path=os.getenv("OBJ_DETECTION_OUTPUT_PATH")
 
     start_obj_det_training_validation(
                                   model,
                                   train_loader, 
                                   val_loader,
+                                  class_labels,
                                   optimizer,
                                   num_epochs,
                                   device,
+                                  samples_to_display=num_samples,
                                   batch_size=batch_size,
-                                  model_out_path="fasterrcnn_resnet50_fpn_best.pth"
+                                  output_path=output_path,
+                                  comparison_images=num_comparison_images,
+                                  score_threshold=score_threshold
                                 )
 
 
