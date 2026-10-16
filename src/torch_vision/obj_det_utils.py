@@ -14,7 +14,26 @@ from torchvision.transforms import v2 as T
 import  torchvision.utils as vutils
 from .obj_det_dataset import create_voc_dataset
 from .vision_utils import gridify_multiple_tensor_images
-from ..utils.model_utils import write_to_csv
+from ..utils.model_utils import write_to_csv, read_from_csv
+from ..utils.data_plotter import plot_x_y, plot_multiX_y
+
+ANALYTICS_FILE="analytics.csv"
+EPOCH_MAP_FILE="mAP.csv"
+ARTIFACTS_FOLDER="artifacts"
+EPOCH="Epoch"
+STEP="Step"
+LR="Lr"
+LOSS="Loss"
+TRAIN_LOSS="TrainLoss"
+VALIDATE_LOSS="ValidateLoss"
+MAP="mAP"
+MAP_05="mAP_0.5"
+STEP_VS_LOSS_FILE="step_vs_loss.jpg"
+TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
+
+# Keep track of global steps
+steps = 0
+
 
 def prepare_obj_det_data(
                  train_images_path, 
@@ -81,12 +100,12 @@ def start_obj_det_training_validation(
                                   id_to_names=None,
                                   score_threshold=0.5,
                                   display=False):
-  """
-  Starts the training and validation loop with the given parameters
-  """
-  print("\n--------------- TRAINING & VALIDATION IN PROGRESS ----------------")
-  model_name=model.__class__.__name__
-  print(f"""
+    """
+    Starts the training and validation loop with the given parameters
+    """
+    print("\n--------------- TRAINING & VALIDATION IN PROGRESS ----------------")
+    model_name=model.__class__.__name__
+    print(f"""
             Model: {model_name}
             Total Training Images: {len(train_loader.dataset)}
             Total Validation Images: {len(val_loader.dataset)}
@@ -102,53 +121,57 @@ def start_obj_det_training_validation(
             Display: {display}
             """)
 
-  model_path, artifacts_path, analytics_path, epoch_map_path = _create_output_infrastructure(output_path, model_name)
-  id_to_names = {v:k for k, v in class_labels.items()}
+    # Setting up the path for output and analytics and convert ids to names
+    model_path, artifacts_path, analytics_path, epoch_map_path = _create_output_infrastructure(output_path, model_name)
+    id_to_names = {v:k for k, v in class_labels.items()}
 
-  # Setting up the analyics path
-  
-  # Display samples of dataset images 
-  train_imgs = create_random_dataset_images(train_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
-  val_imgs = create_random_dataset_images(val_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Validation_Samples", artifacts_path=artifacts_path)
-  
-  if display:
-    train_imgs.show()
-    val_imgs.show()
- 
-  model = model.to(device)
-  best_map = 0.0
+    # Display samples of dataset images 
+    train_imgs = create_random_dataset_images(train_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
+    val_imgs = create_random_dataset_images(val_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Validation_Samples", artifacts_path=artifacts_path)
 
-  comparison_indexes = None
-  if comparison_images > 0:
-      comparison_indexes = [random.randint(0, len(val_loader.dataset) - 1) for _ in range(comparison_images)]
-
-  for epoch in range(num_epochs): 
-    train_loss = train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path)
-    # Evaluation
-    val_loss = get_validation_loss(model, val_loader, device)
-    metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
-
-    print(f"Epoch {epoch + 1}: train {train_loss:.4f} | val {val_loss:.4f} | "
-          f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}\n")
-    epoch_map_results = {
-                            "Epoch": [epoch + 1],
-                            "TrainingLoss": [train_loss],
-                            "ValidationLoss": [val_loss],
-                            "mAP": [metrics['map']],
-                            "map_0.5": [metrics['map_50']]}
-
-    write_to_csv(epoch_map_results, epoch_map_path)
-
-    # Saves the best model
-    if metrics["map"] > best_map:
-        best_map = metrics["map"]
-        print(f"Best mAP so far: {best_map}")
-        torch.save(model.state_dict(), model_path)
-    
-    # If comparison images is greater than zero, invokes the function to show them
-    comp_img = create_groundtruth_prediction_comparision(model, device, val_loader.dataset, comparison_indexes, epoch, id_to_names, score_threshold, artifacts_path)
     if display:
-        comp_img.show()
+        train_imgs.show()
+        val_imgs.show()
+
+    model = model.to(device)
+    best_map = 0.0
+    global steps
+    steps = 0
+
+    comparison_indexes = None
+    if comparison_images > 0:
+        comparison_indexes = [random.randint(0, len(val_loader.dataset) - 1) for _ in range(comparison_images)]
+
+    for epoch in range(num_epochs): 
+        train_loss = train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path)
+        # Evaluation
+        val_loss = get_validation_loss(model, val_loader, device)
+        metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
+
+        print(f"Epoch {epoch + 1}: train {train_loss:.4f} | val {val_loss:.4f} | "
+                f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}\n")
+        epoch_map_results = {
+                                EPOCH: [epoch + 1],
+                                TRAIN_LOSS: [train_loss],
+                                VALIDATE_LOSS: [val_loss],
+                                MAP: [metrics['map']],
+                                MAP_05: [metrics['map_50']]}
+
+        write_to_csv(epoch_map_results, epoch_map_path)
+
+        # Saves the best model
+        if metrics["map"] > best_map:
+            best_map = metrics["map"]
+            print(f"Best mAP so far: {best_map}")
+            torch.save(model.state_dict(), model_path)
+
+        # If comparison images is greater than zero, invokes the function to show them
+        comp_img = create_groundtruth_prediction_comparision(model, device, val_loader.dataset, comparison_indexes, epoch, id_to_names, score_threshold, artifacts_path)
+        if display:
+            comp_img.show()
+
+    # Generate the relevant analytics results
+    _prepare_final_analytics(analytics_path, epoch_map_path, artifacts_path)
 
 def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path):
     """
@@ -173,11 +196,13 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
       optimizer.step()
       running_train_loss += loss.item()
       images_so_far += len(images)
-      pbar.set_postfix(images=f" {images_so_far}/{len(train_loader.dataset)}", avg_loss=f"{running_train_loss/ idx:.4f}")
-
+      global steps
+      steps += 1
+      pbar.set_postfix(steps=f"{steps}", images=f" {images_so_far}/{len(train_loader.dataset)}", avg_loss=f"{running_train_loss/ idx:.4f}")
+    
       # Save the analytics
       if analytics_path:
-        write_to_csv({"Epoch": [epoch + 1], "Step": [idx], "Lr": optimizer.param_groups[0]['lr'], "Loss": [loss.item()]}, analytics_path)
+        write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [loss.item()]}, analytics_path)
       #print(f"Epoch: {epoch + 1} Step: {idx + 1} Loss: {loss.item()} ")
     return running_train_loss / len(train_loader)
 
@@ -292,7 +317,6 @@ def create_groundtruth_prediction_comparision(model, device, val_dataset, image_
         gt_img = vutils.draw_bounding_boxes(img_u8, gt_boxes, labels=gt_names,
                                     colors="lime", width=3)
 
-
         # Filter out the scores that are below the threshold
         valid = output["scores"] >= score_threshold
         pred_boxes = output["boxes"][valid].cpu()
@@ -313,6 +337,35 @@ def create_groundtruth_prediction_comparision(model, device, val_dataset, image_
         img_grid.save(output)
     return img_grid
 
+def _prepare_final_analytics(analytics_path, epoch_map_path, artifacts_path):
+    """
+    Reads from the analytics files and then generates the artifacts
+    """
+    print(f"Preparing analytics ...")
+    # Getting and plotting data from the analytics file
+    data = read_from_csv(analytics_path)
+    print(f"Reading from analytics file: {analytics_path}")
+    steps = data[STEP].tolist()
+    losses = data[LOSS].tolist()
+    save_path=os.path.join(artifacts_path, STEP_VS_LOSS_FILE)
+    plot_x_y(steps, losses, x_label="steps", y_label="loss", title="Step vs Loss", save_path=save_path)
+
+    # Getting and plotting data from the mAP file
+    mdata = read_from_csv(epoch_map_path)
+    print(f"Reading from mAP file: {epoch_map_path}")
+    epochs = mdata[EPOCH].tolist()
+    train_loss = mdata[TRAIN_LOSS].tolist()
+    val_loss = mdata[VALIDATE_LOSS].tolist()
+    mAP = mdata[MAP].tolist()
+    mAP_05 = mdata[MAP_05].tolist()
+    # Training vs Validation loss on epochs
+    x_values = [train_loss, val_loss]
+    x_names = ["TrainLoss", "ValidateLoss"]
+    x_colors = ["green", "orange", "Blue"]
+    save_path = os.path.join(artifacts_path, TRAIN_VS_VALIDATE_LOSS_FILE)
+    plot_multiX_y(x_values=x_values, x_names=x_names, x_colors=x_colors, y_values=epochs, y_title="Epochs", title="Training vs Validation Loss", save_path=save_path)
+    
+
 def _create_output_infrastructure(output_path, model_name):
     """
     Creates the necessary folder strucutures to output the model, artifacts etc.
@@ -320,9 +373,9 @@ def _create_output_infrastructure(output_path, model_name):
     folder_name = datetime.now().strftime(f"%Y%m%d_%H%M") + "_" + model_name
     final_path = os.path.join(output_path, folder_name)
     model_path = os.path.join(final_path, model_name + ".pt")
-    analytics_path = os.path.join(final_path, "analytics.csv")
-    epoch_map_path = os.path.join(final_path, "mAP.csv")
-    artifacts_path = os.path.join(final_path, "artifacts")
+    analytics_path = os.path.join(final_path, ANALYTICS_FILE)
+    epoch_map_path = os.path.join(final_path, EPOCH_MAP_FILE)
+    artifacts_path = os.path.join(final_path, ARTIFACTS_FOLDER)
     if not os.path.exists(artifacts_path):
         os.makedirs(artifacts_path)
     return model_path, artifacts_path, analytics_path, epoch_map_path

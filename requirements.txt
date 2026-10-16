@@ -13,3 +13,4 @@ scipy
 optuna
 tqdm
 pycocotools
+numpy

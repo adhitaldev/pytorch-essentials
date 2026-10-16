@@ -79,6 +79,16 @@ def write_to_csv(key_values, csv_file_path, append=True):
     pdf.to_csv(csv_file_path, mode="a", header=not os.path.exists(csv_file_path), index=False)
 
 
+def read_from_csv(csv_file, exclude_header=True):
+    """
+    Reads from a csv file as a pandas dataframe.
+    """
+    values = None
+    with open(csv_file):
+        values = pd.read_csv(csv_file)
+    return values
+
+
 if __name__ == "__main__":
     # Example usage
     from torchvision.models import resnet18, ResNet18_Weights

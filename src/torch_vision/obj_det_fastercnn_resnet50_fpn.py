@@ -107,8 +107,7 @@ if __name__=="__main__":
                                   batch_size=batch_size,
                                   output_path=output_path,
                                   comparison_images=num_comparison_images,
-                                  score_threshold=score_threshold,
-                                  display=True
+                                  score_threshold=score_threshold
                                 )
 
 
