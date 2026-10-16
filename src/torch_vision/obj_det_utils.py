@@ -79,7 +79,8 @@ def start_obj_det_training_validation(
                                   output_path=".",
                                   comparison_images=0,
                                   id_to_names=None,
-                                  score_threshold=0.5):
+                                  score_threshold=0.5,
+                                  display=False):
   """
   Starts the training and validation loop with the given parameters
   """
@@ -98,6 +99,7 @@ def start_obj_det_training_validation(
             Comparision Images: {comparison_images}
             Id to Names: {id_to_names}
             Score Threshold: {score_threshold}\n
+            Display: {display}
             """)
 
   model_path, artifacts_path, analytics_path, epoch_map_path = _create_output_infrastructure(output_path, model_name)
@@ -106,9 +108,13 @@ def start_obj_det_training_validation(
   # Setting up the analyics path
   
   # Display samples of dataset images 
-  display_random_dataset_images(train_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
-  display_random_dataset_images(val_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Validation_Samples", artifacts_path=artifacts_path)
-
+  train_imgs = create_random_dataset_images(train_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
+  val_imgs = create_random_dataset_images(val_loader.dataset, id_to_names, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Validation_Samples", artifacts_path=artifacts_path)
+  
+  if display:
+    train_imgs.show()
+    val_imgs.show()
+ 
   model = model.to(device)
   best_map = 0.0
 
@@ -140,8 +146,9 @@ def start_obj_det_training_validation(
         torch.save(model.state_dict(), model_path)
     
     # If comparison images is greater than zero, invokes the function to show them
-    display_groundtruth_prediction_comparision(model, device, val_loader.dataset, comparison_indexes, epoch, id_to_names, score_threshold, artifacts_path)
-
+    comp_img = create_groundtruth_prediction_comparision(model, device, val_loader.dataset, comparison_indexes, epoch, id_to_names, score_threshold, artifacts_path)
+    if display:
+        comp_img.show()
 
 def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path):
     """
@@ -223,17 +230,17 @@ def get_validation_loss(model, val_loader, device):
     return total/len(val_loader)
 
 
-def display_random_dataset_images(dataset, id_to_names, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
+def create_random_dataset_images(dataset, id_to_names, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
     """
-    Displays a grid of 'num_images' random images from the given 'dataset'
-    and adds a title and padding if requested.
+    Creates and returns a grid of 'num_images' random images from the given 'dataset'
+    and adds a title and padding if requested. Saves it if necessary.
     """
     if not dataset:
-        print(f"{display_random_dataset_images.__name__} No dataset provided to draw samples")
+        print(f"{create_random_dataset_images.__name__} No dataset provided to draw samples")
         return
 
     if  num_images <= 0:
-        print(f"{display_random_dataset_images.__name__} Number of images to draw <= 0")
+        print(f"{create_random_dataset_images.__name__} Number of images to draw <= 0")
         return
 
     indexes = [random.randint(0, len(dataset) - 1) for _ in range(num_images)]
@@ -252,7 +259,6 @@ def display_random_dataset_images(dataset, id_to_names, num_images=0, title="", 
         )
         img_tensors.append(annotated_img)
     img_grid = gridify_multiple_tensor_images(img_tensors, padding=padding, title=title)
-    img_grid.show()
 
     # save if artifacts path is provided
     if os.path.exists(artifacts_path):
@@ -261,14 +267,15 @@ def display_random_dataset_images(dataset, id_to_names, num_images=0, title="", 
         img_name = f"{title}.jpg"
         output = os.path.join(artifacts_path, img_name)
         img_grid.save(output)
+    return img_grid
 
-def display_groundtruth_prediction_comparision(model, device, val_dataset, image_indexes, epoch, id_to_names, score_threshold=0.0, artifacts_path=None):
+def create_groundtruth_prediction_comparision(model, device, val_dataset, image_indexes, epoch, id_to_names, score_threshold=0.0, artifacts_path=None):
     """
-    Displays a grid of side by side image comparion of groundtruth bounding boxes
-    with the predicted bounding boxes.
+    Creates and returns a grid of side by side image comparion of groundtruth bounding boxes
+    with the predicted bounding boxes. Saves it if necessary.
     """
     if not val_dataset or not image_indexes:
-        print(f"{display_groundtruth_prediction_comparision.__name__}No dataset and/or images for groundtruth viewing")
+        print(f"{create_groundtruth_prediction_comparision.__name__}No dataset and/or images for groundtruth viewing")
         return
     img_tensors = []
     model.eval()
@@ -298,13 +305,13 @@ def display_groundtruth_prediction_comparision(model, device, val_dataset, image
         img_tensors.append(pred_img)
 
     img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}")
-    img_grid.show()
 
     # save if artifacts path is provided
     if os.path.exists(artifacts_path):
         img_name = f"epoch_{epoch + 1}.jpg"
         output = os.path.join(artifacts_path, img_name)
         img_grid.save(output)
+    return img_grid
 
 def _create_output_infrastructure(output_path, model_name):
     """

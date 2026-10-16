@@ -21,7 +21,7 @@ from PIL import Image
 from src.utils.model_utils import get_model_classes_from_weights_meta
 from src.torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor
 from dotenv import load_dotenv
-from .obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss, display_random_dataset_images
+from .obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss
 
 # Use this environment file in the torch_vision package for environment variables
 env_file = f".env.object_detection"
@@ -107,7 +107,8 @@ if __name__=="__main__":
                                   batch_size=batch_size,
                                   output_path=output_path,
                                   comparison_images=num_comparison_images,
-                                  score_threshold=score_threshold
+                                  score_threshold=score_threshold,
+                                  display=True
                                 )
 
 
