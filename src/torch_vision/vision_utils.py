@@ -2,10 +2,11 @@
 Helpful utility functions for vision tasks.
 """
 import math
+import random
 import torch
-import torchvision.utils as vutils
+import  torchvision.utils as vutils
 from torchvision.transforms.functional import to_pil_image
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageOps, ImageFont
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -142,7 +143,7 @@ def visualize_tensor_image(image_tensor=None, label="Unknown", mean=None, std=No
     plt.show()
 
 
-def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=4, bg=(255, 255, 255)):
+def gridify_multiple_tensor_images(images, cols=None, cell_size=None, padding=4, bg=(255, 255, 255), title=""):
     """
     Takes in a list of image tensors and draws them in a grid evenly.
     """
@@ -155,8 +156,10 @@ def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=
     cell_size: (width, height) of every cell (default: size of the largest image)
     padding:   pixels between cells and around the border
     bg:        background color
-    Returns a PIL.Image.
+    title:     optional title to draw above the grid
+    returns the PIL.Image
     """
+    
     if len(images) == 0:
         raise ValueError("images is empty")
 
@@ -176,7 +179,28 @@ def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=
 
     grid_w = cols * cell_w + (cols + 1) * padding
     grid_h = rows * cell_h + (rows + 1) * padding
+    title_h = 0
+
+    # Prepare font for title (size 24). Fall back to default if truetype not available.
+    try:
+        font = ImageFont.truetype("Arial.ttf", 22)
+    except Exception:
+        font = ImageFont.load_default()
+
+    if title:
+        title_draw = ImageDraw.Draw(Image.new("RGB", (1, 1), bg))
+        text_bbox = title_draw.textbbox((0, 0), title, font=font)
+        title_h = max((text_bbox[3] - text_bbox[1]) + padding, 1)
+        grid_h += title_h + padding
+
     grid = Image.new("RGB", (grid_w, grid_h), bg)
+
+    if title:
+        draw = ImageDraw.Draw(grid)
+        text_w = text_bbox[2] - text_bbox[0]
+        x = max((grid_w - text_w) // 2, 0)
+        y = max(padding // 2, 0)
+        draw.text((x, y), title, fill="black", font=font)
 
     for i, im in enumerate(pil_imgs):
         r, c = divmod(i, cols)
@@ -184,12 +208,10 @@ def visualize_multiple_tensor_images(images, cols=None, cell_size=None, padding=
         im = ImageOps.contain(im, (cell_w, cell_h))
         # Center inside the cell
         x = padding + c * (cell_w + padding) + (cell_w - im.width) // 2
-        y = padding + r * (cell_h + padding) + (cell_h - im.height) // 2
+        y = title_h + padding + r * (cell_h + padding) + (cell_h - im.height) // 2
         grid.paste(im, (x, y))
 
-    grid.show()
-
-
+    return grid
 
 
 

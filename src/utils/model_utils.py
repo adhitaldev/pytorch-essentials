@@ -1,5 +1,7 @@
+import os
 import time
 import torch
+import pandas as pd
 
 def get_model_size_in_mb(model):
     """
@@ -61,6 +63,30 @@ def get_model_classes_from_model(model):
     if not hasattr(model, 'weights') or model.weights is None:
         raise ValueError("Model does not have weights. Please provide a model with weights.")
     return get_model_classes_from_weights_meta(model, weights=model.weights)
+
+
+def write_to_csv(key_values, csv_file_path, append=True):
+    """
+    Converts the key_values to pandas data frame to the provided csv file path.
+    """
+    if not key_values:
+        print(f"{write_to_csv.__name__} Key Values not provided")
+        return
+    if not csv_file_path:
+        print(f"{write_to_csv.__name__} csv path not provided")
+        return
+    pdf = pd.DataFrame(key_values)
+    pdf.to_csv(csv_file_path, mode="a", header=not os.path.exists(csv_file_path), index=False)
+
+
+def read_from_csv(csv_file, exclude_header=True):
+    """
+    Reads from a csv file as a pandas dataframe.
+    """
+    values = None
+    with open(csv_file):
+        values = pd.read_csv(csv_file)
+    return values
 
 
 if __name__ == "__main__":
