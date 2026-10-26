@@ -5,6 +5,9 @@ This repo covers the essentials functionalities/concepts of the Pytorch library 
 ## src/torch_fundamentals
 Provides various tutorials on pytorch - compiled mostly from the Coursera's 'Pytorch for Deep Learning' specialization course by Laurence Moroney. It contains fundamentals to advanced Pytorch topics.
 
+## src/torch_vision
+Provides samples, utilies, documentation, and implementations of various vision networks for object detection and key point detection in PyTorch.
+
 ## src/dnn/
 It has implementations of some neural networks while emphasizing documentation and learnability from the written code.
 
