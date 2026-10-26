@@ -92,3 +92,4 @@ htmlcov/
 # =========================
 *.log
 .env.object_detection
+.env.keypts_detection

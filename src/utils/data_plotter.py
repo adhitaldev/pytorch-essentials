@@ -95,12 +95,12 @@ def plot_x_y(x_values: 'list', y_values: 'list', x_label="", y_label="", title="
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.show(block=False)
+    plt.pause(2.0)
 
 def plot_multiX_y(x_values: "list[list]", x_names: 'list', x_colors: 'list', y_values: 'list', y_title="", title="", save_path=""):
     """
-    Plots multiple types of x values against a single list of y values. Helpful for comparision plots, for
-    example plotting training loss vs validation loss against epochs.
+    Plots multiple types of x values against a single list of y values.
     """
     if len(x_values) != len(x_names) != len(x_colors) :
         print(f"Provide equal number of names and colors for the x values")
@@ -116,15 +116,44 @@ def plot_multiX_y(x_values: "list[list]", x_names: 'list', x_colors: 'list', y_v
             )
         ax.plot(xs, y_values, color=x_colors[idx], label=x_names[idx])
    
-    ax.set_ylabel(y_title)
     ax.set_title(title)
+    ax.set_ylabel(y_title)
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
 
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show(block=False)
+    plt.pause(2.0)
 
-    plt.show()
+def plot_multiY_x(y_values: "list[list]", y_names: 'list', y_colors: 'list', x_values: 'list', x_title="", title="", save_path=""):
+    """
+    Plots multiple different y series against a single list of x values.
+    Useful for comparison plots, such as training loss vs validation loss across epochs.
+    """
+    if len(y_values) != len(y_names) != len(y_colors):
+        print("Provide equal number of names and colors for the y values")
+        return
 
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for idx, ys in enumerate(y_values):
+        if len(ys) != len(x_values):
+            raise ValueError(
+                f"y_values[{idx}] has length {len(ys)}, "
+                f"but x_values has length {len(x_values)}."
+            )
+        ax.plot(x_values, ys, color=y_colors[idx], label=y_names[idx])
+
+    ax.set_title(title)
+    ax.set_xlabel(x_title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show(block=False)
+    plt.pause(2.0)
  

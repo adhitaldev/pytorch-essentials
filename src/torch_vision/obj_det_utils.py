@@ -11,14 +11,16 @@ from datetime import datetime
 from torch.utils.data import DataLoader
 from torchmetrics.detection import MeanAveragePrecision
 from torchvision.transforms import v2 as T
+from torchvision.ops import box_iou
 import  torchvision.utils as vutils
 from .obj_det_dataset import create_voc_dataset
 from .vision_utils import gridify_multiple_tensor_images
 from ..utils.model_utils import write_to_csv, read_from_csv
-from ..utils.data_plotter import plot_x_y, plot_multiX_y
+from ..utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
 
 ANALYTICS_FILE="analytics.csv"
 EPOCH_MAP_FILE="mAP.csv"
+EPOCH_PR_FILE ="precision_recall.csv"
 ARTIFACTS_FOLDER="artifacts"
 EPOCH="Epoch"
 STEP="Step"
@@ -30,6 +32,12 @@ MAP="mAP"
 MAP_05="mAP_0.5"
 STEP_VS_LOSS_FILE="step_vs_loss.jpg"
 TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
+MAPS_FILE = "mAPs.jpg"
+PR_FILE = "precision_recall.jpg"
+PRECISION_PER_CLASS = "precision_per_class"
+RECALL_PER_CLASS = "recall_per_class"
+PRECISION = "precision"
+RECALL = "recall"
 
 # Keep track of global steps
 steps = 0
@@ -122,7 +130,7 @@ def start_obj_det_training_validation(
             """)
 
     # Setting up the path for output and analytics and convert ids to names
-    model_path, artifacts_path, analytics_path, epoch_map_path = _create_output_infrastructure(output_path, model_name)
+    model_path, artifacts_path, analytics_path, epoch_map_path, epoch_pr_path = _create_output_infrastructure(output_path, model_name)
     id_to_names = {v:k for k, v in class_labels.items()}
 
     # Display samples of dataset images 
@@ -147,9 +155,11 @@ def start_obj_det_training_validation(
         # Evaluation
         val_loss = get_validation_loss(model, val_loader, device)
         metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
-
+        precision_recall = detection_pr(model, val_loader, device, epoch, id_to_names, score_thresh=0.5, iou_thresh=0.5)
         print(f"Epoch {epoch + 1}: train {train_loss:.4f} | val {val_loss:.4f} | "
-                f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}\n")
+        f"mAP {metrics['map']:.3f} | mAP@0.5 {metrics['map_50']:.3f}\nPR: {precision_recall}")
+        write_to_csv(precision_recall, epoch_pr_path)
+
         epoch_map_results = {
                                 EPOCH: [epoch + 1],
                                 TRAIN_LOSS: [train_loss],
@@ -171,7 +181,9 @@ def start_obj_det_training_validation(
             comp_img.show()
 
     # Generate the relevant analytics results
-    _prepare_final_analytics(analytics_path, epoch_map_path, artifacts_path)
+    _prepare_final_analytics(analytics_path, epoch_map_path, epoch_pr_path, artifacts_path)
+
+    print("\n--------------- TRAINING & VALIDATION COMPLETE ----------------")
 
 def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path):
     """
@@ -239,6 +251,77 @@ def evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size):
   results = metric.compute()
   return {k: (v.tolist() if v.ndim else v.item()) for k, v in results.items()}
 
+@torch.no_grad()
+def detection_pr(model, val_loader, device, epoch, id_to_names, score_thresh=0.5, iou_thresh=0.5):
+    """
+    Calculates the precision and recall of the model with the given score and iou thresholds.
+    Precision - How often is the model's prediction correct? P = TP/(TP + FP)
+    Recall - How many of the positive cases did the model correctly identify ? R = TP / (TP + FN)
+    """
+    model.eval()
+    num_classes = len(id_to_names) + 1          # index 0 = background
+    # True positives, false positives, and false negatives tensors
+    tp = torch.zeros(num_classes)
+    fp = torch.zeros(num_classes)
+    fn = torch.zeros(num_classes)
+
+    for images, targets in val_loader:
+        images = [img.to(device) for img in images]
+        outputs = model(images)
+
+        for out, tgt in zip(outputs, targets):
+            mask = out["scores"] >= score_thresh
+            p_boxes = out["boxes"][mask].cpu()
+            p_labels = out["labels"][mask].cpu()
+            p_scores = out["scores"][mask].cpu()
+
+            g_boxes = tgt["boxes"].as_subclass(torch.Tensor).cpu()
+            g_labels = tgt["labels"].cpu()
+
+            matched_gt = set()
+            order = p_scores.argsort(descending=True)
+
+            if len(p_boxes) and len(g_boxes):
+                ious = box_iou(p_boxes, g_boxes)
+            else:
+                ious = torch.zeros(len(p_boxes), len(g_boxes))
+
+            for i in order.tolist():
+                c = int(p_labels[i])
+                best_iou, best_j = 0.0, -1
+                for j in range(len(g_boxes)):
+                    if j in matched_gt or int(g_labels[j]) != c:
+                        continue
+                    if ious[i, j] > best_iou:
+                        best_iou, best_j = float(ious[i, j]), j
+                if best_iou >= iou_thresh:
+                    matched_gt.add(best_j)
+                    tp[c] += 1
+                else:
+                    fp[c] += 1
+
+            for j in range(len(g_boxes)):
+                if j not in matched_gt:
+                    fn[int(g_labels[j])] += 1
+
+    # Computed once, after all batches
+    eps = 1e-9
+    precision = tp / (tp + fp + eps)
+    recall = tp / (tp + fn + eps)
+    overall_p = tp[1:].sum() / (tp[1:].sum() + fp[1:].sum() + eps)
+    overall_r = tp[1:].sum() / (tp[1:].sum() + fn[1:].sum() + eps)
+
+    res = { 
+           EPOCH: [epoch],
+           PRECISION: [overall_p.item()],
+           RECALL : [overall_r.item()]
+           }
+
+    for label_id in range(1, num_classes):
+        name = id_to_names[label_id]
+        res[f"{PRECISION}_{name}"] = [precision[label_id].item()]
+        res[f"{RECALL}_{name}"] = [recall[label_id].item()]
+    return res
 
 def get_validation_loss(model, val_loader, device):
     """
@@ -304,7 +387,7 @@ def create_groundtruth_prediction_comparision(model, device, val_dataset, image_
         return
     img_tensors = []
     model.eval()
-    print(f"Displaying comparison visualization for epoch {epoch}... ")
+    print(f"Creating comparison visualization for epoch {epoch}... ")
     for idx in image_indexes:
         image, target = val_dataset[idx]
         output = model([image.to(device)])[0]
@@ -337,7 +420,7 @@ def create_groundtruth_prediction_comparision(model, device, val_dataset, image_
         img_grid.save(output)
     return img_grid
 
-def _prepare_final_analytics(analytics_path, epoch_map_path, artifacts_path):
+def _prepare_final_analytics(analytics_path, epoch_map_path, epoch_pr_path, artifacts_path):
     """
     Reads from the analytics files and then generates the artifacts
     """
@@ -351,19 +434,40 @@ def _prepare_final_analytics(analytics_path, epoch_map_path, artifacts_path):
     plot_x_y(steps, losses, x_label="steps", y_label="loss", title="Step vs Loss", save_path=save_path)
 
     # Getting and plotting data from the mAP file
-    mdata = read_from_csv(epoch_map_path)
     print(f"Reading from mAP file: {epoch_map_path}")
+    mdata = read_from_csv(epoch_map_path)
     epochs = mdata[EPOCH].tolist()
     train_loss = mdata[TRAIN_LOSS].tolist()
     val_loss = mdata[VALIDATE_LOSS].tolist()
     mAP = mdata[MAP].tolist()
     mAP_05 = mdata[MAP_05].tolist()
+
     # Training vs Validation loss on epochs
-    x_values = [train_loss, val_loss]
-    x_names = ["TrainLoss", "ValidateLoss"]
-    x_colors = ["green", "orange", "Blue"]
+    y_values = [train_loss, val_loss]
+    y_names = ["TrainLoss", "ValidateLoss"]
+    y_colors = ["blue", "red"]
     save_path = os.path.join(artifacts_path, TRAIN_VS_VALIDATE_LOSS_FILE)
-    plot_multiX_y(x_values=x_values, x_names=x_names, x_colors=x_colors, y_values=epochs, y_title="Epochs", title="Training vs Validation Loss", save_path=save_path)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Training vs Validation Loss", save_path=save_path)
+    
+    # mAPs on epochs
+    y_values = [mAP, mAP_05]
+    y_names = ["mAP", "mAP_0.5"]
+    y_colors = ["green", "orange"]
+    save_path = os.path.join(artifacts_path, MAPS_FILE)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="mAPs", save_path=save_path)
+    
+    # Precision and recall
+    print(f"Reading from precision recall file: {epoch_pr_path}")
+    prdata = read_from_csv(epoch_pr_path)
+    epochs = prdata[EPOCH].tolist()
+    precision = prdata[PRECISION].tolist()
+    recall = prdata[RECALL].tolist()
+
+    y_values = [precision, recall]
+    y_names = ["precision", "recall"]
+    y_colors = ["gray", "blue"]
+    save_path = os.path.join(artifacts_path, PR_FILE)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Overall Precision vs Recall", save_path=save_path)
     
 
 def _create_output_infrastructure(output_path, model_name):
@@ -375,10 +479,11 @@ def _create_output_infrastructure(output_path, model_name):
     model_path = os.path.join(final_path, model_name + ".pt")
     analytics_path = os.path.join(final_path, ANALYTICS_FILE)
     epoch_map_path = os.path.join(final_path, EPOCH_MAP_FILE)
+    epoch_pr_path = os.path.join(final_path, EPOCH_PR_FILE)
     artifacts_path = os.path.join(final_path, ARTIFACTS_FOLDER)
     if not os.path.exists(artifacts_path):
         os.makedirs(artifacts_path)
-    return model_path, artifacts_path, analytics_path, epoch_map_path
+    return model_path, artifacts_path, analytics_path, epoch_map_path, epoch_pr_path
 
 def _collate(batch):
   """
