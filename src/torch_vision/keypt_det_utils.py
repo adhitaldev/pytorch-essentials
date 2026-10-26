@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from xml.etree import ElementTree as ET
 from torchvision.transforms import v2 as T
-from key_pt_dataset import create_keypt_dataset
+from keypt_hrnet_dataset import create_keypt_hrnet_dataset
 
 def prepare_key_pts_data(
     train_images_path,
