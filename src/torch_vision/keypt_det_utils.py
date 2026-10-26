@@ -5,6 +5,59 @@ from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from dotenv import load_dotenv
 from xml.etree import ElementTree as ET
+from torchvision.transforms import v2 as T
+from key_pt_dataset import create_keypt_dataset
+
+def prepare_key_pts_data(
+    train_images_path,
+    train_annotations_path,
+    val_images_path,
+    val_annotations_path,
+    keypt_labels: 'dict',
+    batch_size=64,
+    train_transforms=None,
+    val_transforms=None):
+    """
+    Prepares data for key point detection based on the given parameters.
+    Returns data loaders for training and validation.
+    """
+    print("\n--------------- PREPARING DATA IN PROGRESS ----------------")
+    print(f"Train Images Path: {train_images_path}")
+    print(f"Train Annotations Path: {train_annotations_path}")
+    print(f"Validate Images Path: {validation_images_path}")
+    print(f"Validate Annotations Path: {validation_annotations_path}")
+    print(f"Class labels: {class_labels}")
+    print(f"Batch size: {batch_size}")
+
+    if not train_transforms:
+        train_transforms =  T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomRotation(degrees=15),
+            T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1),
+            T.Resize((224, 224))
+        ])
+
+    if not validate_transforms:
+        validate_transforms = T.Compose([
+        T.Resize((224, 224)),
+        T.ToDtype(torch.float32, scale=True)
+    ])
+
+    train_dataset = create_keypt_dataset(train_images_path, 
+                                        train_annotations_path,
+                                        keypt_labels, class_labels,
+                                        train_transforms)
+
+    val_dataset = create_keypt_dataset(validation_images_path, 
+                                        validation_annotations_path,
+                                        keypt_labels, class_labels,
+                                        validate_transforms) 
+    
+    # Data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+    return train_dataset, val_dataset, train_loader, val_loader
+
 
 def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder, split_extension=True):
     """
@@ -118,6 +171,49 @@ def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output
             img_out_path = os.path.join(output_folder, img)
             cimg.save(img_out_path)
     print(f"{len(images) - len(missing_annotations)} images annotated and saved to {output_folder}")
+
+def annotate_key_points_on_image(input_img_path: 'str', keypoints: 'list[tuple]', names: 'list[str]',  confidences: 'list[float]', output_path: None, show: True):
+    """
+    Annotates the given keypoints with names and confidences on the provided image.
+    Shows and/or outputs the annotated image if requested.
+    """
+    if not input_img_path or not keypoints or not names or not confidences:
+        print("Incomplete data for annotations. Provide image path, keypoints, names, and confidences")
+
+    if len(keypoints) != len(names) != len(confidences):
+        print(f"Keypoints, names, and confidences don't have the same length for annotations")
+        return
+    image_pil = Image.open(input_img_path).convert('RGB')
+
+    # Redraw and save the image with the annotated points
+    try:
+        font = ImageFont.truetype("Arial.ttf", size=16)
+    except IOError:
+        font = ImageFont.load_default()
+    x_offset = 10
+    y_offset = 10
+    radius = 2
+
+    cimg = image_pil.copy()
+    draw = ImageDraw.Draw(cimg)
+    for keypoint, name, confidence in zip(keypoints, names, confidences):
+        # Draw a ellipse around the x and y for visibility
+        x, y = keypoint[0], keypoint[1]
+        bounding_box = [x - radius, y - radius, x + radius, y + radius]
+        draw.ellipse(bounding_box, fill="red")
+        # Draw the text
+        text_coords = (x + x_offset, y - y_offset)
+        txt_to_draw = name + "_" + str(confidence)
+        draw.text(text_coords, name, fill="black", font=font)
+
+    # save
+    if output_path:
+        img_out_path = os.path.join(output_folder, img)
+        cimg.save(img_out_path)
+    if show:
+        cimg.show()
+
+
 
 if __name__ == "__main__":
     env_file = ".env.keypts_detection"
