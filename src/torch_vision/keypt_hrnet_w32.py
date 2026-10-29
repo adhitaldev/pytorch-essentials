@@ -281,6 +281,7 @@ def start_hrnet_training_validation(
   steps = 0
   for epoch in range(num_epochs):
     train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, num_epochs, batch_size, analytics_path)
+    evaluate(model,val_loader, device, epoch, num_epochs, batch_size)
 
 def train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, num_epochs, batch_size, analytics_path):
   """
@@ -325,6 +326,84 @@ def train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, nu
     # if analytics_path:
     # write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [curr_avg_loss]}, analytics_path)
     return running_train_loss / len(train_loader)
+
+@torch.no_grad()
+def evaluate(model,val_loader, device, epoch, num_epochs, batch_size):
+  """
+  Evaluates the scores of the validation dataset
+  """
+  model.eval()
+  pbar = tqdm.tqdm(val_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Validate]")
+  images_so_far = 0
+  total_val_loss = 0
+  total_valid_keypoints = 0
+  total_pixel_distance_error = 0.0
+  for idx, (images, target_heatmaps, target_mask, class_id) in enumerate(pbar, start=1):
+    images = images.to(device)
+    target_heatmaps = target_heatmaps.to(device)
+    target_mask = target_mask.to(device)
+    pred_heatmaps = model(images)
+
+    # Raw element wise squared differences [batch_size, num_keypts, 64, 48]
+    raw_loss = loss_func(pred_heatmaps, target_heatmaps)
+
+    # Average spatial dimension loss
+    avg_kpt_loss = raw_loss.mean(dim=[2, 3])
+
+    # Visibility mask 
+    masked_loss = avg_kpt_loss * target_mask.squeeze(-1)
+    valid_keypoints = torch.clamp(target_mask.sum(), min=1.0) # avoid div by zero if there are no valid key_pts
+    loss = 0.5 * (masked_loss.sum() / valid_keypoints)
+    
+    total_val_loss += loss.item()
+    total_valid_keypoints += valid_keypoints.item()
+
+    # 2. Keypoint Accuracy Metric (Mean L2 Pixel Distance on 256x192 canvas)
+    # Extract peak (x, y) coordinates on 64x48 heatmap
+    b, k, h_hm, w_hm = pred_heatmaps.shape
+    pred_flat = pred_heatmaps.reshape(b, k, -1)
+    targ_flat = target_heatmaps.reshape(b, k, -1)
+
+    _, pred_idx = torch.max(pred_flat, dim=2)
+    _, targ_idx = torch.max(targ_flat, dim=2)
+
+    # Heatmap coordinates scaled up by 4 to match 256x192 image canvas
+    pred_x = (pred_idx % w_hm).float() * 4.0
+    pred_y = (pred_idx // w_hm).float() * 4.0
+    targ_x = (targ_idx % w_hm).float() * 4.0
+    targ_y = (targ_idx // w_hm).float() * 4.0
+
+    # Compute Euclidean distance per keypoint: [B, 24]
+    euclidean_dist = torch.sqrt((pred_x - targ_x) ** 2 + (pred_y - targ_y) ** 2)
+
+    # Accumulate error only for visible landmarks
+    valid_mask = target_mask.squeeze(-1) > 0
+    if valid_mask.any():
+      total_pixel_distance_error += euclidean_dist[valid_mask].sum().item()
+
+    # Running display
+    running_avg_loss = total_val_loss / max(total_valid_keypoints, 1.0)
+    running_pixel_err = total_pixel_distance_error / max(
+        total_valid_keypoints, 1.0
+    )
+    pbar.set_postfix(
+        val_loss=f"{running_avg_loss:.5f}",
+        mean_px_err=f"{running_pixel_err:.2f}px",
+    )
+
+  final_val_loss = total_val_loss / max(total_valid_keypoints, 1.0)
+  final_mean_pixel_err = total_pixel_distance_error / max(
+      total_valid_keypoints, 1.0
+  )
+
+  print(
+      f"Validation Summary - Loss: {final_val_loss:.6f} | Mean Keypoint Error:"
+      f" {final_mean_pixel_err:.2f} px"
+  )
+
+  return final_val_loss, final_mean_pixel_err
+
+
 
 def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
   """
@@ -415,7 +494,6 @@ def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
 
 if __name__ == "__main__":
-
   # Load the dog pose dataset and train the model
   env_file = f".env.keypts_detection"
   from dotenv import load_dotenv
@@ -436,9 +514,8 @@ if __name__ == "__main__":
   model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=len(idx_to_keypts))
   device = "cuda" if torch.cuda.is_available() else "cpu"
 
-  # To create a test dataset, select an item and display it, use this function
+  # To create a test dataset, select an item and display it, uncomment the following line
   # test_dataset_creation(img_dir, annotations_dict, idx_to_class, idx_to_keypts)
-
 
   # Use this section to create train/val set and train the model  
   train_dataset, val_dataset, train_loader, val_loader = prepare_key_pts_data(
