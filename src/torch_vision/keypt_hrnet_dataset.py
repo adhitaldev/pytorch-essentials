@@ -176,7 +176,6 @@ class HRnetKeypointDetectionDataset(Dataset):
         scale_y = self.target_height / orig_h
 
         raw_kpts = item["keypoints"]
-        print(f"Raw keypoints : {raw_kpts}")
         scaled_kpts = []
         for k_idx in range(self.num_keypts):
             # For each key point it comes in this order (x, y, visibility). It's already normmalized

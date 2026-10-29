@@ -5,16 +5,19 @@ in the official HRNet documentation.
 Original paper: "Deep High-Resolution Represetntaion Learning for Human Pose Estimation" (Sun, et. all)
 """
 import numpy as np
+import random
 import os
 import torch
 import torch.nn as nn
 from torchvision import transforms
 from torchvision.transforms import v2 as T
+import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
 import timm
 from PIL import Image
-from vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor
+from vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
 from keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
+from keypt_utils import create_keypts_output_infrastructure
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -188,17 +191,17 @@ def prepare_key_pts_data(
     Returns data loaders for training and validation.
     """
     print("\n--------------- PREPARING HRNET KEYPOINT DETECTOR DATA IN PROGRESS ----------------")
-    if not train_transforms:
-        train_transforms =  T.Compose([
-            T.RandomHorizontalFlip(),
-            T.RandomRotation(degrees=15),
-            T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1)
-        ])
+    # if not train_transforms:
+    #     train_transforms =  T.Compose([
+    #         T.RandomHorizontalFlip(),
+    #         T.RandomRotation(degrees=15),
+    #         T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1)
+    #     ])
 
-    if not val_transforms:
-        val_transforms = T.Compose([
-        T.ToDtype(torch.float32, scale=True)
-    ])
+    # if not val_transforms:
+    #     val_transforms = T.Compose([
+    #     T.ToDtype(torch.float32, scale=True)
+    # ])
 
     train_dataset = create_keypt_hrnet_dataset(train_images_path, 
                                         train_annotations_dict,
@@ -217,6 +220,96 @@ def prepare_key_pts_data(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     return train_dataset, val_dataset, train_loader, val_loader
+
+def start_hrnet_training_validation(
+  model, 
+  train_loader,
+  val_loader,
+  idx_to_class,
+  idx_to_keypts,
+  optimizer,
+  num_epochs,
+  devices,
+  samples_to_display=0,
+  batch_size=64,
+  output_path=".",
+  comparision_images=0,
+  score_threshold=0.1,
+  display=False):
+  """
+  Starts the training and validation loop with the given parameters
+  """
+  print("\n--------------- TRAINING & VALIDATION IN PROGRESS ----------------")
+  model_name = model.__class__.__name__
+  print(f"""
+            Model: {model_name}
+            Total Training Images: {len(train_loader.dataset)}
+            Total Validation Images: {len(val_loader.dataset)}
+            Id to Class: {idx_to_class}
+            Id to Keypoints: {idx_to_keypts}
+            Optimizer: {optimizer}
+            Total Epochs: {num_epochs}
+            Device: {device}
+            Batch Size: {batch_size}
+            Output path: {output_path}
+            Comparision Images: {comparision_images}
+            Score Threshold: {score_threshold}\n
+            Display: {display}
+              """)
+
+  # Setting up the path for output and analytics and convert ids to names
+  model_path, artifacts_path, analytics_path, epoch_map_path, epoch_pr_path = create_keypts_output_infrastructure(output_path, model_name)
+
+  # Display samples of dataset images 
+  train_imgs = create_random_keypts_dataset_images(train_loader.dataset, idx_to_keypts, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
+  val_imgs = create_random_keypts_dataset_images(val_loader.dataset, idx_to_keypts, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Validation_Samples", artifacts_path=artifacts_path)
+
+
+def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
+  """
+  Creates and returns a grid of 'num_images' random images from the given 'dataset'
+  and adds a title and padding if requested. Saves it if necessary.
+  """
+  if not dataset:
+      print(f"{create_random_dataset_images.__name__} No dataset provided to draw samples")
+      return
+
+  if  num_images <= 0:
+      print(f"{create_random_dataset_images.__name__} Number of images to draw <= 0")
+      return
+
+  indexes = [random.randint(0, len(dataset) - 1) for _ in range(num_images)]
+  img_tensors = []
+
+  for idx in indexes:
+      image, heatmaps, target_mask, class_id = dataset[idx]
+      #image.show()
+      heatmaps = heatmaps.unsqueeze(0)
+      keypts, confidences = decode_heatmaps(heatmaps)
+
+      # Drawing the image back with keypoints
+      adjusted_kpts = []
+      confs = []
+      names = []
+      for idx, kp in enumerate(keypts):
+        if confidences[idx] <= 0:
+          continue
+        h = kp[0]
+        w = kp[1]
+        adjusted_kpts.append((h, w))
+        confs.append(confidences[idx])
+        names.append(idx_to_keypts[idx])
+      denorm_img = denormalize_image_tensor(image, hrnet_mean, hrnet_std)
+      pil_img = get_pil_image_from_torch_tensor(denorm_img)
+      pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
+      img_tensors.append(TF.to_tensor(pil_img))
+  img_grid = gridify_multiple_tensor_images(img_tensors, title=title)
+  img_grid.show()
+  # save if artifacts path is provided
+  if os.path.exists(artifacts_path):
+      img_name = f"{title}.jpg"
+      output = os.path.join(artifacts_path, img_name)
+      img_grid.save(output)
 
 def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   """
@@ -293,3 +386,26 @@ if __name__ == "__main__":
                                                                   val_anno_dict,
                                                                   idx_to_class,
                                                                   idx_to_keypts)
+
+  num_epochs = int(os.getenv("KEYPT_DETECTION_NUM_EPOCHS", 2))
+  learning_rate = 1e-5
+  optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+  output_path = os.getenv("KEYPT_DETECTION_OUTPUT_PATH")
+  samples = int(os.getenv("KEYPT_DETECTION_NUM_SAMPLES"))
+  comparisions = int(os.getenv("KEYPT_DETECTION_COMPARISION_SAMPLES"))
+  start_hrnet_training_validation(
+                                  model, 
+                                  train_loader,
+                                  val_loader,
+                                  idx_to_class,
+                                  idx_to_keypts,
+                                  optimizer,
+                                  num_epochs,
+                                  device,
+                                  samples_to_display=samples,
+                                  batch_size=64,
+                                  output_path=output_path,
+                                  comparision_images=comparisions,
+                                  score_threshold=0.1,
+                                  display=True
+                                  )

@@ -260,6 +260,7 @@ def annotate_key_points_on_image(image_pil, keypoints: 'list[tuple]', names: 'li
         cimg.save(img_out_path)
     if show:
         cimg.show()
+    return cimg
 
 def denormalize_image_tensor(img_tensor, mean, std):
     """

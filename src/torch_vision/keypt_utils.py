@@ -1,11 +1,49 @@
 
 
 import os
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from dotenv import load_dotenv
 from xml.etree import ElementTree as ET
 from torchvision.transforms import v2 as T
+
+ANALYTICS_FILE="analytics.csv"
+EPOCH_MAP_FILE="mAP.csv"
+EPOCH_PR_FILE ="precision_recall.csv"
+ARTIFACTS_FOLDER="artifacts"
+EPOCH="Epoch"
+STEP="Step"
+LR="Lr"
+LOSS="Loss"
+TRAIN_LOSS="TrainLoss"
+VALIDATE_LOSS="ValidateLoss"
+MAP="mAP"
+MAP_05="mAP_0.5"
+STEP_VS_LOSS_FILE="step_vs_loss.jpg"
+TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
+MAPS_FILE = "mAPs.jpg"
+PR_FILE = "precision_recall.jpg"
+PRECISION_PER_CLASS = "precision_per_class"
+RECALL_PER_CLASS = "recall_per_class"
+PRECISION = "precision"
+RECALL = "recall"
+
+
+def create_keypts_output_infrastructure(output_path, model_name):
+    """
+    Creates the necessary folder strucutures to output the model, artifacts etc.
+    """
+    folder_name = datetime.now().strftime(f"%Y%m%d_%H%M") + "_" + model_name
+    final_path = os.path.join(output_path, folder_name)
+    model_path = os.path.join(final_path, model_name + ".pt")
+    analytics_path = os.path.join(final_path, ANALYTICS_FILE)
+    epoch_map_path = os.path.join(final_path, EPOCH_MAP_FILE)
+    epoch_pr_path = os.path.join(final_path, EPOCH_PR_FILE)
+    artifacts_path = os.path.join(final_path, ARTIFACTS_FOLDER)
+    if not os.path.exists(artifacts_path):
+        os.makedirs(artifacts_path)
+    return model_path, artifacts_path, analytics_path, epoch_map_path, epoch_pr_path
 
 def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder, split_extension=True):
     """
