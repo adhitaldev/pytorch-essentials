@@ -8,6 +8,7 @@ import numpy as np
 import random
 import os
 import torch
+import tqdm
 import torch.nn as nn
 from torchvision import transforms
 from torchvision.transforms import v2 as T
@@ -18,10 +19,14 @@ from PIL import Image
 from vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
 from keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
 from keypt_utils import create_keypts_output_infrastructure
+#from ..utils.model_utils import write_to_csv, read_from_csv
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 hrnet_std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+# Keep track of global steps
+steps = 0
 
 class HRNetCustomPoseEstimator(torch.nn.Module):
     import torch
@@ -192,14 +197,14 @@ def prepare_key_pts_data(
     """
     print("\n--------------- PREPARING HRNET KEYPOINT DETECTOR DATA IN PROGRESS ----------------")
     # if not train_transforms:
-    #     train_transforms =  T.Compose([
-    #         T.RandomHorizontalFlip(),
-    #         T.RandomRotation(degrees=15),
-    #         T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1)
+    #     train_transforms =  transforms.Compose([
+    #         # transforms.RandomHorizontalFlip(),
+    #         # transforms.RandomRotation(degrees=15),
+    #         transforms.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1)
     #     ])
 
     # if not val_transforms:
-    #     val_transforms = T.Compose([
+    #     val_transforms = transforms.Compose([
     #     T.ToDtype(torch.float32, scale=True)
     # ])
 
@@ -228,6 +233,7 @@ def start_hrnet_training_validation(
   idx_to_class,
   idx_to_keypts,
   optimizer,
+  loss_func,
   num_epochs,
   devices,
   samples_to_display=0,
@@ -248,6 +254,7 @@ def start_hrnet_training_validation(
             Id to Class: {idx_to_class}
             Id to Keypoints: {idx_to_keypts}
             Optimizer: {optimizer}
+            Loss Func: {loss_func}
             Total Epochs: {num_epochs}
             Device: {device}
             Batch Size: {batch_size}
@@ -264,6 +271,60 @@ def start_hrnet_training_validation(
   train_imgs = create_random_keypts_dataset_images(train_loader.dataset, idx_to_keypts, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
   val_imgs = create_random_keypts_dataset_images(val_loader.dataset, idx_to_keypts, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Validation_Samples", artifacts_path=artifacts_path)
 
+  if display:
+    train_imgs.show()
+    val_imgs.show()
+
+  # Training and validation through epochs
+  model = model.to(device)
+  global steps
+  steps = 0
+  for epoch in range(num_epochs):
+    train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, num_epochs, batch_size, analytics_path)
+
+def train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, num_epochs, batch_size, analytics_path):
+  """
+  Trains a single epoch of the HRnet pose estimator
+  """
+  model.train()
+  running_train_loss = 0
+  images_so_far = 0
+  pbar = pbar = tqdm.tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Train]")
+  for idx,(images, target_heatmaps, target_mask, class_id) in enumerate(pbar, start=1):
+    images = images.to(device) # required shape (batch_size, 3, 256, 192)
+    target_heatmaps = target_heatmaps.to(device) # required shape (batch_size, num_keypts, 64, 48)
+    target_mask = target_mask.to(device) # required shape (batch_size, num_keypts, 1)
+    optimizer.zero_grad()
+    pred_heatmaps = model(images)# required shape (batch_size, num_keypts, 64, 48) i.e. same as target_heatmaps
+    
+    # Raw element wise squared differences [batch_size, num_keypts, 64, 48]
+    raw_loss = loss_func(pred_heatmaps, target_heatmaps)
+
+    # Average spatial dimension loss
+    avg_kpt_loss = raw_loss.mean(dim=[2, 3])
+
+    # Visibility mask 
+    masked_loss = avg_kpt_loss * target_mask.squeeze(-1)
+    valid_keypoints = torch.clamp(target_mask.sum(), min=1.0) # avoid div by zero if there are no valid key_pts
+    loss = 0.5 * (masked_loss.sum() / valid_keypoints)
+
+    # Backward pass & parameter optimization
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    optimizer.step()
+
+    # Running loss 
+    running_train_loss += loss.item()
+    images_so_far += len(images)
+    curr_avg_loss = running_train_loss / idx
+    global steps
+    steps += 1
+    pbar.set_postfix(steps=f"{steps}", images=f"{images_so_far} / {len(train_loader.dataset)}", avg_loss=f"{curr_avg_loss:.4f}")
+
+    # Save the analytics
+    # if analytics_path:
+    # write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [curr_avg_loss]}, analytics_path)
+    return running_train_loss / len(train_loader)
 
 def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
   """
@@ -304,12 +365,12 @@ def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, tit
       pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
       img_tensors.append(TF.to_tensor(pil_img))
   img_grid = gridify_multiple_tensor_images(img_tensors, title=title)
-  img_grid.show()
   # save if artifacts path is provided
   if os.path.exists(artifacts_path):
       img_name = f"{title}.jpg"
       output = os.path.join(artifacts_path, img_name)
       img_grid.save(output)
+  return img_grid
 
 def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   """
@@ -354,11 +415,6 @@ def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
 
 if __name__ == "__main__":
-  # Get the modified model
-  model = get_model_backbone(False)
-  model = modify_model_get_backbone(model)
-  model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=17)
-  device = "cuda" if torch.cuda.is_available() else "cpu"
 
   # Load the dog pose dataset and train the model
   env_file = f".env.keypts_detection"
@@ -373,6 +429,12 @@ if __name__ == "__main__":
   val_anno_dict = get_annotation_dict_from_dog_pose_images(val_anno_dir)
   idx_to_class = get_idx_class_dog_pose_dataset()
   idx_to_keypts = get_idx_keypoints_dog_pose_dataset()
+
+    # Get the modified model
+  model = get_model_backbone(False)
+  model = modify_model_get_backbone(model)
+  model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=len(idx_to_keypts))
+  device = "cuda" if torch.cuda.is_available() else "cpu"
 
   # To create a test dataset, select an item and display it, use this function
   # test_dataset_creation(img_dir, annotations_dict, idx_to_class, idx_to_keypts)
@@ -390,6 +452,7 @@ if __name__ == "__main__":
   num_epochs = int(os.getenv("KEYPT_DETECTION_NUM_EPOCHS", 2))
   learning_rate = 1e-5
   optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+  loss_func = nn.MSELoss(reduction="none") # 'none' enables manual visibility masking
   output_path = os.getenv("KEYPT_DETECTION_OUTPUT_PATH")
   samples = int(os.getenv("KEYPT_DETECTION_NUM_SAMPLES"))
   comparisions = int(os.getenv("KEYPT_DETECTION_COMPARISION_SAMPLES"))
@@ -400,6 +463,7 @@ if __name__ == "__main__":
                                   idx_to_class,
                                   idx_to_keypts,
                                   optimizer,
+                                  loss_func,
                                   num_epochs,
                                   device,
                                   samples_to_display=samples,
