@@ -56,9 +56,8 @@ def get_ndjson_with_images(ndjson_file: str, output_folder: str):
                 img_path = os.path.join(csplit, img_name)
                 img.save(img_path)
 
-                # 2. Save the annotation (.txt for YOLO format)
-                base_name = os.path.splitext(img_name)[0]
-                label_path = os.path.join(csplit, f"{base_name}.txt")
+                # 2. Save the annotation (imagename.json for YOLO format)
+                label_path = os.path.join(csplit, f"{img_name}.json")
 
                 with open(label_path, "w", encoding="utf-8") as lf:
                     # Adjust formatting depending on how Ultralytics exports 'label'

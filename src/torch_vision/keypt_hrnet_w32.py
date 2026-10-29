@@ -11,7 +11,8 @@ import torch.nn as nn
 from torchvision import transforms
 import timm
 from PIL import Image
-from keypt_det_utils import annotate_key_points_on_image
+from vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor
+from keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -93,13 +94,13 @@ class HRNetCustomPoseEstimator(nn.Module):
     # Map to keypoint heatmaps: shape (Batch, 9, 64, 48)
     return self.keypoint_head(high_res_features)
 
-def decode_heatmaps(heatmaps, original_img_size=(256, 192)):
+def decode_heatmaps(heatmaps, img_size=(256, 192)):
     """ 
     Extracts the (x, y) coordinates from the heatmap tensors
     original_img_size in (H, W)
     """
     batch_size, num_keypoints, h_map, w_map = heatmaps.shape
-    org_w, org_h = original_img_size
+    target_h, target_w  = img_size
 
     # Reshape heatmap to 2D matrix per keypoint: (Batch, Num_Keypoints, H_map * W_map)
     heatmaps_reshaped = heatmaps.reshape(batch_size, num_keypoints, -1)
@@ -109,12 +110,8 @@ def decode_heatmaps(heatmaps, original_img_size=(256, 192)):
 
     # Convert 1D flattened index back into (x, y) grid coordinates
     preds = torch.zeros((batch_size, num_keypoints, 2), device=heatmaps.device)
-    preds[:, :, 0] = (idx % w_map).float()  # x coordinate on heatmap
-    preds[:, :, 1] = (idx // w_map).float()  # y coordinate on heatmap
-
-    # Scale coordinates from heatmap resolution back to original image size
-    preds[:, :, 0] *= org_w / w_map
-    preds[:, :, 1] *= org_h / h_map
+    preds[:, :, 0] = (idx % w_map).float()  * (target_w / w_map)  # x coordinate on heatmap
+    preds[:, :, 1] = (idx // w_map).float()  * (target_h / h_map) # y coordinate on heatmap
 
     # Squeeze batch dimension for single-image inference
     keypoints = preds[0].cpu().numpy()
@@ -208,46 +205,68 @@ def get_keypoint_names_for_dog_pose_dataset():
     return dog_pose_kpts
 
 if __name__ == "__main__":
+    # Get the modified model
     model = get_model_backbone(False)
     model = modify_model_get_backbone(model)
     model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=17)
     print(model)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Load the dog pose dataset and train the model
     env_file = f".env.keypts_detection"
     from dotenv import load_dotenv
     load_dotenv(env_file)
+    img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
+    anno_dir = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH")
     
-    test_img = os.getenv("KEYPT_EXAMPLE_IMG")
-    if not os.path.exists(test_img):
-        print(f"Image does not exists")
-    
-    # Define your dataset's landmark name map
-    KEYPOINT_NAMES = {
-        0: "Nose",
-        1: "Left Eye",
-        2: "Right Eye",
-        3: "Left Ear",
-        4: "Right Ear",
-        5: "Left Shoulder",
-        6: "Right Shoulder",
-        7: "Left Elbow",
-        8: "Right Elbow",
-        9: "Left Wrist",
-        10: "Right Wrist",
-        11: "Left Hip",
-        12: "Right Hip",
-        13: "Left Knee",
-        14: "Right Knee",
-        15: "Left Ankle",
-        16: "Right Ankle"
-        }
-    keypoints, confidence = predict_pose(model, test_img, device)
+    annotations_dict = get_annotation_dict_from_dog_pose_images(anno_dir)
+    idx_to_class = get_idx_class_dog_pose_dataset()
+    idx_to_keypts = get_idx_keypoints_dog_pose_dataset()
+    print(f"Annotation dictionary for creating dataset:\n{annotations_dict}")
+    dog_dataset = create_keypt_hrnet_dataset(
+        img_dir,
+        annotations_dict=annotations_dict,
+        transforms=None,
+        idx_to_class=idx_to_class,
+        idx_to_keypts=idx_to_keypts,
+        input_size=(IN_H, IN_W),
+        sigma=2,
+    )
 
-    coordinates, names, confidences = [], [], []
-    for idx, (x, y) in enumerate(keypoints):
-        coordinates.append((x, y))
-        names.append(KEYPOINT_NAMES[idx])
-        confidences.append(confidence[idx])
-    annotate_key_points_on_image(input_img_path=test_img, keypoints=coordinates, names=names,  confidences=confidences, output_path=None, show=True)
-       
+    # keypoints, confidence = predict_pose(model, test_img, device)
+
+    print(f"Length of dataset {len(dog_dataset)}")
+    print(f"First item in dataset ....")
+    img, target_heatmaps, target_mask, class_id = dog_dataset[5]
+    print(f"Image Shape: {img.shape}")
+    print(f"Target mask: {target_mask}")
+   
+    # Adding batch dim to heatmaps
+    target_heatmaps = target_heatmaps.unsqueeze(0)
+    print(f"Decoding heatmaps\ntarget_heapmaps: Shape: {target_heatmaps.shape} Value:{target_heatmaps}")
+    keypts, confidences = decode_heatmaps(target_heatmaps)
+    print(f"Total keypoints: {len(keypts)} Keypoint: {keypts} Confidences:\n{confidences}")
+    print(f"Keypoint chape {keypts[0][0]} {keypts[0][1]}")
+
+    adjusted_kpts = []
+    confs = []
+    names = []
+    for idx, kp in enumerate(keypts):
+      if confidences[idx] <= 0:
+        continue
+      h = kp[0]
+      w = kp[1]
+      adjusted_kpts.append((h, w))
+      confs.append(confidences[idx])
+      names.append(idx_to_keypts[idx])
+    print("ff")
+    print(adjusted_kpts)
+    denorm_img = denormalize_image_tensor(img, hrnet_mean, hrnet_std)
+    pil_img = get_pil_image_from_torch_tensor(denorm_img)
+    print(f"Pil image size : {pil_img.size}")
+    annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
+    # visualize_tensor_image(img, label="test keypoints")
+
+    
     

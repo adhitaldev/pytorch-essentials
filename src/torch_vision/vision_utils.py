@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageOps, ImageFont
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def get_mean_std(dataset):
     """
     Calculates the mean and standard deviation of a PyTorch dataset.
@@ -213,5 +214,78 @@ def gridify_multiple_tensor_images(images, cols=None, cell_size=None, padding=4,
 
     return grid
 
+def annotate_key_points_on_image(input_img_path: 'str', keypoints: 'list[tuple]', names: 'list[str]',  confidences: 'list[float]', output_path: None, show: True):
+    """
+    Overrides for the original call with image path.
+    """
+    image_pil = Image.open(input_img_path).convert('RGB')
+    annotate_key_points_on_image(image_pil, keypoints, names, confidences, output_path, show)
+
+def annotate_key_points_on_image(image_pil, keypoints: 'list[tuple]', names: 'list[str]',  confidences: 'list[float]', output_path: None, show: True):
+    """
+    Annotates the given keypoints with names and confidences on the provided image.
+    Shows and/or outputs the annotated image if requested.
+    """
+    if not image_pil or not keypoints or not names or not confidences:
+        print("Incomplete data for annotations. Provide image path, keypoints, names, and confidences")
+
+    if len(keypoints) != len(names) != len(confidences):
+        print(f"Keypoints, names, and confidences don't have the same length for annotations")
+        return
+
+    # Redraw and save the image with the annotated points
+    try:
+        font = ImageFont.truetype("Arial.ttf", size=16)
+    except IOError:
+        font = ImageFont.load_default()
+    x_offset = 10
+    y_offset = 10
+    radius = 2
+
+    cimg = image_pil.copy()
+    draw = ImageDraw.Draw(cimg)
+    for keypoint, name, confidence in zip(keypoints, names, confidences):
+        # Draw a ellipse around the x and y for visibility
+        x, y = keypoint[0], keypoint[1]
+        bounding_box = [x - radius, y - radius, x + radius, y + radius]
+        draw.ellipse(bounding_box, fill="red")
+        # Draw the text
+        text_coords = (x + x_offset, y - y_offset)
+        txt_to_draw = name + "_" + str(confidence)
+        draw.text(text_coords, name, fill="black", font=font)
+
+    # save
+    if output_path:
+        img_out_path = os.path.join(output_folder, img)
+        cimg.save(img_out_path)
+    if show:
+        cimg.show()
+
+def denormalize_image_tensor(img_tensor, mean, std):
+    """
+    Inverts the image tensor normalization adn converts (C, H, W)
+    to (H, W, C) uint8.
+    """
+    img = img_tensor.cpu().numpy().transpose(1, 2, 0)  # (256, 192, 3)
+    img = (img * std + mean) * 255.0
+    img = np.clip(img, 0, 255).astype(np.uint8)
+    return img
+
+if __name__ == "__main__":
+    env_file = ".env.keypts_detection"
+    if os.path.exists(env_file):
+      load_dotenv(env_file)
+    else:
+      load_dotenv()
+    
+    images_folder = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH", "")
+    annotations_folder = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH", "")
+    output_folder = os.getenv("KEYPT_DETECTION_OUTPUT_PATH", "")
+    annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder)
 
 
+def get_pil_image_from_torch_tensor(img_tensor):
+    """
+    Wrapper function to convert a torch image tensor to PIL image.
+    """
+    return to_pil_image(img_tensor)

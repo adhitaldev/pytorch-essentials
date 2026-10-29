@@ -6,7 +6,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from xml.etree import ElementTree as ET
 from torchvision.transforms import v2 as T
-from keypt_hrnet_dataset import create_keypt_hrnet_dataset
 
 def prepare_key_pts_data(
     train_images_path,
@@ -172,57 +171,3 @@ def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output
             cimg.save(img_out_path)
     print(f"{len(images) - len(missing_annotations)} images annotated and saved to {output_folder}")
 
-def annotate_key_points_on_image(input_img_path: 'str', keypoints: 'list[tuple]', names: 'list[str]',  confidences: 'list[float]', output_path: None, show: True):
-    """
-    Annotates the given keypoints with names and confidences on the provided image.
-    Shows and/or outputs the annotated image if requested.
-    """
-    if not input_img_path or not keypoints or not names or not confidences:
-        print("Incomplete data for annotations. Provide image path, keypoints, names, and confidences")
-
-    if len(keypoints) != len(names) != len(confidences):
-        print(f"Keypoints, names, and confidences don't have the same length for annotations")
-        return
-    image_pil = Image.open(input_img_path).convert('RGB')
-
-    # Redraw and save the image with the annotated points
-    try:
-        font = ImageFont.truetype("Arial.ttf", size=16)
-    except IOError:
-        font = ImageFont.load_default()
-    x_offset = 10
-    y_offset = 10
-    radius = 2
-
-    cimg = image_pil.copy()
-    draw = ImageDraw.Draw(cimg)
-    for keypoint, name, confidence in zip(keypoints, names, confidences):
-        # Draw a ellipse around the x and y for visibility
-        x, y = keypoint[0], keypoint[1]
-        bounding_box = [x - radius, y - radius, x + radius, y + radius]
-        draw.ellipse(bounding_box, fill="red")
-        # Draw the text
-        text_coords = (x + x_offset, y - y_offset)
-        txt_to_draw = name + "_" + str(confidence)
-        draw.text(text_coords, name, fill="black", font=font)
-
-    # save
-    if output_path:
-        img_out_path = os.path.join(output_folder, img)
-        cimg.save(img_out_path)
-    if show:
-        cimg.show()
-
-
-
-if __name__ == "__main__":
-    env_file = ".env.keypts_detection"
-    if os.path.exists(env_file):
-      load_dotenv(env_file)
-    else:
-      load_dotenv()
-    
-    images_folder = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH", "")
-    annotations_folder = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH", "")
-    output_folder = os.getenv("KEYPT_DETECTION_OUTPUT_PATH", "")
-    annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder)
