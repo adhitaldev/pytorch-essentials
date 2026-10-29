@@ -9,6 +9,8 @@ import os
 import torch
 import torch.nn as nn
 from torchvision import transforms
+from torchvision.transforms import v2 as T
+from torch.utils.data import Dataset, DataLoader
 import timm
 from PIL import Image
 from vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor
@@ -93,6 +95,7 @@ class HRNetCustomPoseEstimator(nn.Module):
 
     # Map to keypoint heatmaps: shape (Batch, 9, 64, 48)
     return self.keypoint_head(high_res_features)
+ 
 
 def decode_heatmaps(heatmaps, img_size=(256, 192)):
     """ 
@@ -117,7 +120,6 @@ def decode_heatmaps(heatmaps, img_size=(256, 192)):
     keypoints = preds[0].cpu().numpy()
     confidence = maxvals[0].cpu().numpy()
     return keypoints, confidence
-
 
 def get_model_backbone(only_features=True):
     model = timm.create_model("hrnet_w32", pretrained=True, f_only=only_features)
@@ -171,102 +173,123 @@ def predict_pose(model, image_path, device="cuda"):
     )
     return keypoint_positions, confidence_scores
 
-
-def get_keypoint_names_for_dog_pose_dataset():
+def prepare_key_pts_data(
+    train_images_path: 'str',
+    train_annotations_dict: 'dict',
+    val_images_path: 'str',
+    val_annotations_dict: 'dict',
+    idx_to_class: 'dict',
+    idx_to_keypts: 'dict',
+    batch_size=64,
+    train_transforms=None,
+    val_transforms=None):
     """
-    Returns the keypoint names for dog_pose_dataset
+    Prepares data for key point detection based on the given parameters.
+    Returns data loaders for training and validation.
     """
-    dog_pose_kpts = {
-        0: "front_left_paw",
-        1: "front_left_knee",
-        2: "front_left_elbow",
-        3: "rear_left_paw",
-        4: "rear_left_knee",
-        5: "rear_left_elbow",
-        6: "front_right_paw",
-        7: "front_right_knee",
-        8: "front_right_elbow",
-        9: "rear_right_paw",
-        10: "rear_right_knee",
-        11: "rear_right_elbow",
-        12: "tail_start",
-        13: "tail_end",
-        14: "left_ear_base",
-        15: "right_ear_base",
-        16: "nose",
-        17: "chin",
-        18: "left_ear_tip",
-        19: "right_ear_tip",
-        20: "left_eye",
-        21: "right_eye",
-        22: "withers",
-        23: "throat"
-    }
-    return dog_pose_kpts
+    print("\n--------------- PREPARING HRNET KEYPOINT DETECTOR DATA IN PROGRESS ----------------")
+    if not train_transforms:
+        train_transforms =  T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomRotation(degrees=15),
+            T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1)
+        ])
 
-if __name__ == "__main__":
-    # Get the modified model
-    model = get_model_backbone(False)
-    model = modify_model_get_backbone(model)
-    model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=17)
-    print(model)
+    if not val_transforms:
+        val_transforms = T.Compose([
+        T.ToDtype(torch.float32, scale=True)
+    ])
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    train_dataset = create_keypt_hrnet_dataset(train_images_path, 
+                                        train_annotations_dict,
+                                        train_transforms,
+                                        idx_to_class,
+                                        idx_to_keypts
+                                        )
 
-    # Load the dog pose dataset and train the model
-    env_file = f".env.keypts_detection"
-    from dotenv import load_dotenv
-    load_dotenv(env_file)
-    img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
-    anno_dir = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH")
+    val_dataset = create_keypt_hrnet_dataset(val_images_path, 
+                                        val_annotations_dict,
+                                        val_transforms,
+                                        idx_to_class,
+                                        idx_to_keypts) 
     
-    annotations_dict = get_annotation_dict_from_dog_pose_images(anno_dir)
-    idx_to_class = get_idx_class_dog_pose_dataset()
-    idx_to_keypts = get_idx_keypoints_dog_pose_dataset()
-    print(f"Annotation dictionary for creating dataset:\n{annotations_dict}")
-    dog_dataset = create_keypt_hrnet_dataset(
+    # Data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    return train_dataset, val_dataset, train_loader, val_loader
+
+def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
+  """
+  Simple test to create a dataset with heatmaps, get the first item from it,
+  decode the heatmaps back to keypoints, and then draw them back on the image.
+  """
+  dog_dataset = create_keypt_hrnet_dataset(
         img_dir,
-        annotations_dict=annotations_dict,
+        annotations_dict=anno_dict,
         transforms=None,
         idx_to_class=idx_to_class,
         idx_to_keypts=idx_to_keypts,
         input_size=(IN_H, IN_W),
-        sigma=2,
-    )
+        sigma=2)
 
-    # keypoints, confidence = predict_pose(model, test_img, device)
+  print(f"Length of dataset {len(dog_dataset)}")
+  print(f"Getting first img, heatmap item in dataset ....")
+  img, target_heatmaps, target_mask, class_id = dog_dataset[0]
+  print(f"Image Shape: {img.shape}")
+  print(f"Target mask: {target_mask}")
+  
+  # Adding batch dim to heatmaps
+  target_heatmaps = target_heatmaps.unsqueeze(0)
+  print(f"Decoding heatmaps\ntarget_heapmaps: Shape: {target_heatmaps.shape} Value:{target_heatmaps}")
+  keypts, confidences = decode_heatmaps(target_heatmaps)
+  print(f"Total keypoints: {len(keypts)} Keypoint: {keypts} Confidences:\n{confidences}")
+  
+  # Drawing the image back with keypoints
+  adjusted_kpts = []
+  confs = []
+  names = []
+  for idx, kp in enumerate(keypts):
+    if confidences[idx] <= 0:
+      continue
+    h = kp[0]
+    w = kp[1]
+    adjusted_kpts.append((h, w))
+    confs.append(confidences[idx])
+    names.append(idx_to_keypts[idx])
+  denorm_img = denormalize_image_tensor(img, hrnet_mean, hrnet_std)
+  pil_img = get_pil_image_from_torch_tensor(denorm_img)
+  annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
 
-    print(f"Length of dataset {len(dog_dataset)}")
-    print(f"First item in dataset ....")
-    img, target_heatmaps, target_mask, class_id = dog_dataset[5]
-    print(f"Image Shape: {img.shape}")
-    print(f"Target mask: {target_mask}")
-   
-    # Adding batch dim to heatmaps
-    target_heatmaps = target_heatmaps.unsqueeze(0)
-    print(f"Decoding heatmaps\ntarget_heapmaps: Shape: {target_heatmaps.shape} Value:{target_heatmaps}")
-    keypts, confidences = decode_heatmaps(target_heatmaps)
-    print(f"Total keypoints: {len(keypts)} Keypoint: {keypts} Confidences:\n{confidences}")
-    print(f"Keypoint chape {keypts[0][0]} {keypts[0][1]}")
+if __name__ == "__main__":
+  # Get the modified model
+  model = get_model_backbone(False)
+  model = modify_model_get_backbone(model)
+  model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=17)
+  device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    adjusted_kpts = []
-    confs = []
-    names = []
-    for idx, kp in enumerate(keypts):
-      if confidences[idx] <= 0:
-        continue
-      h = kp[0]
-      w = kp[1]
-      adjusted_kpts.append((h, w))
-      confs.append(confidences[idx])
-      names.append(idx_to_keypts[idx])
-    print("ff")
-    print(adjusted_kpts)
-    denorm_img = denormalize_image_tensor(img, hrnet_mean, hrnet_std)
-    pil_img = get_pil_image_from_torch_tensor(denorm_img)
-    print(f"Pil image size : {pil_img.size}")
-    annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
-    # visualize_tensor_image(img, label="test keypoints")
+  # Load the dog pose dataset and train the model
+  env_file = f".env.keypts_detection"
+  from dotenv import load_dotenv
+  load_dotenv(env_file)
+  train_img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
+  train_anno_dir = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH")
+  val_img_dir = os.getenv("KEYPT_DETECTION_VALIDATE_IMAGES_PATH")
+  val_anno_dir = os.getenv("KEYPT_DETECTION_VALIDATE_ANNOTATIONS_PATH")
+  
+  train_anno_dict = get_annotation_dict_from_dog_pose_images(train_anno_dir)
+  val_anno_dict = get_annotation_dict_from_dog_pose_images(val_anno_dir)
+  idx_to_class = get_idx_class_dog_pose_dataset()
+  idx_to_keypts = get_idx_keypoints_dog_pose_dataset()
 
-    
-    
+  # To create a test dataset, select an item and display it, use this function
+  # test_dataset_creation(img_dir, annotations_dict, idx_to_class, idx_to_keypts)
+
+
+  # Use this section to create train/val set and train the model  
+  train_dataset, val_dataset, train_loader, val_loader = prepare_key_pts_data(
+                                                                  train_img_dir,
+                                                                  train_anno_dict,
+                                                                  val_img_dir,
+                                                                  val_anno_dict,
+                                                                  idx_to_class,
+                                                                  idx_to_keypts)

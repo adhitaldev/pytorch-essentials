@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms import v2 as T
 from torchvision import tv_tensors, transforms
 from vision_utils import visualize_tensor_image, annotate_key_points_on_image
 
@@ -74,7 +75,7 @@ class HRnetKeypointDetectionDataset(Dataset):
                 transforms.Normalize(mean=hrnet_mean, std= hrnet_std)
             ])
 
-        print(f"\n--- Creating keypoints detection dataset ---")
+        print(f"\n--- Creating {HRnetKeypointDetectionDataset.__name__} ---")
         print(f"Image dir: {self.images_dir}")
         print(f"Length annotation dict: {len(self.annotations_dict)}")
         print(f"Transforms: {self.transform}")
@@ -153,7 +154,6 @@ class HRnetKeypointDetectionDataset(Dataset):
                 mask[k_idx] = 1.0
 
         return torch.from_numpy(heatmaps), torch.from_numpy(mask)
-
 
     def __getitem__(self, idx):
         img_name = self.images[idx]

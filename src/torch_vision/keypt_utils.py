@@ -7,57 +7,6 @@ from dotenv import load_dotenv
 from xml.etree import ElementTree as ET
 from torchvision.transforms import v2 as T
 
-def prepare_key_pts_data(
-    train_images_path,
-    train_annotations_path,
-    val_images_path,
-    val_annotations_path,
-    keypt_labels: 'dict',
-    batch_size=64,
-    train_transforms=None,
-    val_transforms=None):
-    """
-    Prepares data for key point detection based on the given parameters.
-    Returns data loaders for training and validation.
-    """
-    print("\n--------------- PREPARING DATA IN PROGRESS ----------------")
-    print(f"Train Images Path: {train_images_path}")
-    print(f"Train Annotations Path: {train_annotations_path}")
-    print(f"Validate Images Path: {validation_images_path}")
-    print(f"Validate Annotations Path: {validation_annotations_path}")
-    print(f"Class labels: {class_labels}")
-    print(f"Batch size: {batch_size}")
-
-    if not train_transforms:
-        train_transforms =  T.Compose([
-            T.RandomHorizontalFlip(),
-            T.RandomRotation(degrees=15),
-            T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1),
-            T.Resize((224, 224))
-        ])
-
-    if not validate_transforms:
-        validate_transforms = T.Compose([
-        T.Resize((224, 224)),
-        T.ToDtype(torch.float32, scale=True)
-    ])
-
-    train_dataset = create_keypt_dataset(train_images_path, 
-                                        train_annotations_path,
-                                        keypt_labels, class_labels,
-                                        train_transforms)
-
-    val_dataset = create_keypt_dataset(validation_images_path, 
-                                        validation_annotations_path,
-                                        keypt_labels, class_labels,
-                                        validate_transforms) 
-    
-    # Data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
-    return train_dataset, val_dataset, train_loader, val_loader
-
-
 def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder, split_extension=True):
     """
     Draws the keypoints for each image in the images_folder from respective .xml annotation file
