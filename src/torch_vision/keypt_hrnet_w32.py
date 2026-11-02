@@ -16,10 +16,10 @@ import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
 import timm
 from PIL import Image
-from vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
-from keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
-from keypt_utils import create_keypts_output_infrastructure
-#from ..utils.model_utils import write_to_csv, read_from_csv
+from torch_vision.vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
+from torch_vision.keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
+from torch_vision.keypt_utils import create_keypts_output_infrastructure
+from utils.model_utils import write_to_csv, read_from_csv
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -235,7 +235,7 @@ def start_hrnet_training_validation(
   optimizer,
   loss_func,
   num_epochs,
-  devices,
+  device,
   samples_to_display=0,
   batch_size=64,
   output_path=".",
@@ -323,8 +323,8 @@ def train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, nu
     pbar.set_postfix(steps=f"{steps}", images=f"{images_so_far} / {len(train_loader.dataset)}", avg_loss=f"{curr_avg_loss:.4f}")
 
     # Save the analytics
-    # if analytics_path:
-    # write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [curr_avg_loss]}, analytics_path)
+    if analytics_path:
+      write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [curr_avg_loss]}, analytics_path)
     return running_train_loss / len(train_loader)
 
 @torch.no_grad()
@@ -438,7 +438,7 @@ def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, tit
         w = kp[1]
         adjusted_kpts.append((h, w))
         confs.append(confidences[idx])
-        names.append(idx_to_keypts[idx])
+        names.append(id_to_keypts[idx])
       denorm_img = denormalize_image_tensor(image, hrnet_mean, hrnet_std)
       pil_img = get_pil_image_from_torch_tensor(denorm_img)
       pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
@@ -493,8 +493,9 @@ def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   pil_img = get_pil_image_from_torch_tensor(denorm_img)
   annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
 
-if __name__ == "__main__":
-  # Load the dog pose dataset and train the model
+
+def run_keydet_training():
+   # Load the dog pose dataset and train the model
   env_file = f".env.keypts_detection"
   from dotenv import load_dotenv
   load_dotenv(env_file)
@@ -550,3 +551,7 @@ if __name__ == "__main__":
                                   score_threshold=0.1,
                                   display=True
                                   )
+
+
+if __name__ == "__main__":
+  run_keydet_training()

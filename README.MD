@@ -30,18 +30,15 @@ Contains some essentials and often overlooked basic topics in Python like classe
 Includes some modules on AI based vision models like point detectors, examples of torch data handling, point detectors etc. There is some work in progress here.
 
 ## Setup
-Create a Python venv (>=3.12) environment and then activate the environment. 
+The project is packaged with `pyproject.toml` using a `src` layout. Create a Python venv (>=3.12), activate it, and install the project in editable mode from the repository root.
 
 ```bash
 pytorch-essentials> python -m venv .venv
 pytorch-essentials> source .venv/bin/activate
+(.venv)pytorch-essentials> pip install -e .
 ```
 
-Install the requirements
-
-```bash
-(.venv)pytorch-essentials> pip install -r requirements.txt
-```
+Editable mode installs the dependencies and makes these packages importable from `src`: `dnn`, `torch_fundamentals`, `torch_vision`, `utils`, and `vision`. Later edits under `src` apply without reinstalling.
 
 Helpful Pytorch Links
 Documentation: https://docs.pytorch.org/docs/stable/index.html

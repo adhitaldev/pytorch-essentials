@@ -13,10 +13,10 @@ from torchmetrics.detection import MeanAveragePrecision
 from torchvision.transforms import v2 as T
 from torchvision.ops import box_iou
 import  torchvision.utils as vutils
-from .obj_det_dataset import create_voc_dataset
-from .vision_utils import gridify_multiple_tensor_images
-from ..utils.model_utils import write_to_csv, read_from_csv
-from ..utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
+from torch_vision.obj_det_dataset import create_voc_dataset
+from torch_vision.vision_utils import gridify_multiple_tensor_images
+from utils.model_utils import write_to_csv, read_from_csv
+from utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
 
 ANALYTICS_FILE="analytics.csv"
 EPOCH_MAP_FILE="mAP.csv"

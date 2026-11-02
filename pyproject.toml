@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytorch-essentials"
+version = "0.1.0"
+description = "Essentials of PyTorch for learning: fundamentals, vision, and neural network implementations."
+readme = "README.MD"
+requires-python = ">=3.12"
+dependencies = [
+    "torch",
+    "torchvision",
+    "torchmetrics",
+    "transformers",
+    "Pillow",
+    "matplotlib",
+    "python-dotenv",
+    "pytest",
+    "ipython",
+    "pandas",
+    "scipy",
+    "optuna",
+    "tqdm",
+    "pycocotools",
+    "numpy",
+    "timm",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = [
+    "dnn",
+    "dnn.*",
+    "torch_fundamentals",
+    "torch_fundamentals.*",
+    "torch_vision",
+    "torch_vision.*",
+    "utils",
+    "utils.*",
+    "vision",
+    "vision.*",
+]

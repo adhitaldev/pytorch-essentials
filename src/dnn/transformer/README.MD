@@ -10,8 +10,7 @@ Vocabulary : {"The": 0, "cat": 1, "sat": 2}
 vocab_size = 3
 n_embd = 4 # defines as dmodel in the paper
 head_size = 2
-block_size = 4 # block size is a hyperparameter, generally larger than vocab size, and it determines size of position embedding table, and tril mask. It limits how far back the 
-model can look at once.
+block_size = 4 # block size is a hyperparameter, generally larger than vocab size, and it determines size of position embedding table, and tril mask. It limits how far back the model can look at once.
 ```
 
 ## Step 2 Token embedding lookup 
@@ -45,7 +44,7 @@ x has shape of T x C (n_embd) i.e. num of tokens in the current sequence and emb
 This shape x enters the Head as the input.
 ```
 
-## Step 5 - Create the projections of q, k, and v for each token
+## Step 5 (In Head)- Create the projections of q, k, and v for each token
 ```
 k = self.key(x), q = self.query(x), v = self.value(x)
 Three separate matrices with n_embd x head_size are created.
@@ -77,7 +76,7 @@ cat	   [0.01, 0.12]	   [0.20, 0.22]	  [0.05, 1.15]
 sat	   [0.11, 0.11]	   [0.24, 0.22]	  [1.10, 1.10]
 ```
 
-## Step 6 - wei = q @ k.transpose(-2, -1)
+## Step 6 (In Head) - wei = q @ k.transpose(-2, -1)
 ```
 From step 5, 
 Q = [
@@ -111,7 +110,7 @@ sat     0.0264   0.0462   0.0506]
 
 ```
 
-## Step 7 Scaling dot product attention
+## Step 7 (In Head) - Scaling dot product attention
 ```
 scale = 1/sqrt(head_size) = 1/sqrt(2) = 0.7071
 Using this on the resulting matrix from step 6 results in this matrix.
@@ -123,7 +122,7 @@ cat     0.0017   0.0201   0.0204
 sat     0.0187   0.0327   0.0358
 ```
 
-## Step 8 Casual mask
+## Step 8 (In Head) - Casual mask
 ```
 To make sure a position can only see itself and before but not ahead. Here rows = which token is asking, and cols = which token
 is it being scored against.
@@ -134,7 +133,7 @@ cat     0.0017   0.0201    -inf
 sat     0.0187   0.0327   0.0358
 ```
 
-## Step 9 Applying softmax
+## Step 9 (In Head) - Applying softmax
 ```
 Use softmax on the last dimension i.e. for each row from Step 8,
 normalize across all columns in that row or turn each row into
@@ -147,11 +146,11 @@ sat     0.3299   0.3346   0.3356
 
 Here 'The' can only attend to itself, and 'sat' attends to both 'The' and 'cat'.
 ```
-## Step 10 Apply dropout
+## Step 10 (In Head)- Apply dropout
 Dropout is randomness and it's meaningless to show it in a hand-traced calculation. Dropout is also only active 
 during the training mode, and not during evaluation.
 
-## Step 11 
+## Step 11  (In Head)
 ```
 Described in section 3.2
 Turns each token's attention weights into an actual output vector by blending the Value vectors. 
@@ -164,5 +163,8 @@ out = wei (From step 9) @ v (from step 5) results in:
 
 Every row of out is weighted average of every token's Value vector. A token whose attention weight is 0 (masked out, low relevance, etc)contrinbutes nothing to the output, regardless of what's in its v vector, and a higher weight contributes to the output.
 ```
+
+# Step 12 (In MultiHeadAttention)
+
 
 

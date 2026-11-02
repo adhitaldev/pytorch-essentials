@@ -11,7 +11,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.transforms import v2 as T
 from torchvision import tv_tensors, transforms
-from vision_utils import visualize_tensor_image, annotate_key_points_on_image
+from torch_vision.vision_utils import visualize_tensor_image, annotate_key_points_on_image
 
 img_extensions =('.jpg', 'jpeg', '.png', 'jpeg')
 anno_extensions = '.json'
