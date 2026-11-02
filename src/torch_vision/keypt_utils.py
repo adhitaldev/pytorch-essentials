@@ -10,20 +10,26 @@ from torchvision.transforms import v2 as T
 from utils.model_utils import read_from_csv
 from utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
 
+LR="Lr"
 EPOCH="Epoch"
 STEP="Step"
 LOSS="Loss"
-STEP_VS_LOSS_FILE="step_vs_loss.jpg"
-ANALYTICS_FILE="analytics.csv"
-EPOCH_PERROR_FILE="pixel_errors.csv"
-EPOCH_PR_FILE ="precision_recall.csv"
 ARTIFACTS_FOLDER="artifacts"
 MEAN_PIXEL_ERROR="Mean_PX_Error"
 MEDIAN_PIXEL_ERROR="Median_PX_Error"
-VALIDATE_LOSS="ValidateLoss"
-PIXEL_ERROR_FILE="pixel_errors.jpg"
-EPOCH_VAL_LOSS_FILE ="validation_loss.jpg"
+TRAIN_LOSS="AvTrainLoss"
+VALIDATION_LOSS="AvValidateLoss"
+PRECISION="Precision"
+RECALL="Recall"
+F1_SCORE="F1_Score"
 
+# Artifacts definitons
+ANALYTICS_FILE="analytics.csv"
+STEP_VS_LOSS_FILE="step_vs_loss.jpg"
+EPOCH_EVAL_RESULTS="eval_results.csv"
+EPOCH_PIXEL_ERROR_PLOT="pixel_errors.jpg"
+EPOCH_TRAIL_VAL_LOSS="train_vs_validate_loss.jpg"
+EPOCH_PRF1_PLOT ="precision_recall_f1.jpg"
 
 def create_keypts_output_infrastructure(output_path, model_name):
     """
@@ -32,15 +38,14 @@ def create_keypts_output_infrastructure(output_path, model_name):
     folder_name = datetime.now().strftime(f"%Y%m%d_%H%M") + "_" + model_name
     final_path = os.path.join(output_path, folder_name)
     model_path = os.path.join(final_path, model_name + ".pt")
-    analytics_path = os.path.join(final_path, ANALYTICS_FILE)
-    epoch_pixel_error_path = os.path.join(final_path, EPOCH_PERROR_FILE)
-    epoch_pr_path = os.path.join(final_path, EPOCH_PR_FILE)
     artifacts_path = os.path.join(final_path, ARTIFACTS_FOLDER)
+    analytics_path = os.path.join(final_path, ANALYTICS_FILE)
+    epoch_results_path = os.path.join(final_path, EPOCH_EVAL_RESULTS)
     if not os.path.exists(artifacts_path):
         os.makedirs(artifacts_path)
-    return model_path, artifacts_path, analytics_path, epoch_pixel_error_path, epoch_pr_path
+    return model_path, artifacts_path, analytics_path, epoch_results_path
 
-def generate_final_analytics(analytics_path, epoch_pixel_error_path, artifacts_path):
+def generate_final_analytics(analytics_path, epoch_results_path, artifacts_path):
     """
     Reads from the analytics files and then generates the artifacts
     """
@@ -54,28 +59,39 @@ def generate_final_analytics(analytics_path, epoch_pixel_error_path, artifacts_p
     plot_x_y(steps, losses, x_label="steps", y_label="loss", title="Step vs Loss", save_path=save_path)
 
     # Getting and plotting data from the pixel error file
-    print(f"Reading from pixel error file: {epoch_pixel_error_path}")
-    mdata = read_from_csv(epoch_pixel_error_path)
+    print(f"Reading from pixel error file: {epoch_results_path}")
+    mdata = read_from_csv(epoch_results_path)
     epochs = mdata[EPOCH].tolist()
+    train_loss = mdata[TRAIN_LOSS].tolist()
+    val_loss = mdata[VALIDATION_LOSS].tolist()
     mean_error = mdata[MEAN_PIXEL_ERROR].tolist()
     median_error = mdata[MEDIAN_PIXEL_ERROR].tolist()
-    validate_loss = mdata[VALIDATE_LOSS].tolist()
+    precision = mdata[PRECISION].tolist()
+    recall = mdata[RECALL].tolist()
+    f1score = mdata[F1_SCORE].tolist()
 
-    # Training vs Validation loss on epochs
+    # Mean and median pixel errors on epochs
     y_values = [mean_error, median_error]
     y_names = ["Mean Px Error", "Median Px Error"]
-    y_colors = ["blue", "red"]
-    save_path = os.path.join(artifacts_path, PIXEL_ERROR_FILE)
+    y_colors = ["green", "orange"]
+    save_path = os.path.join(artifacts_path, EPOCH_PIXEL_ERROR_PLOT)
     plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Keypoints Pixel Errors", save_path=save_path)
-    
-    # validation loss on epochs
-    y_values = [validate_loss]
-    y_names = ["Validation Loss"]
-    y_colors = ["orange"]
-    save_path = os.path.join(artifacts_path, EPOCH_VAL_LOSS_FILE)
-    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Epoch Validation Loss", save_path=save_path)
-    
-  
+
+    # Training vs Validation loss on epochs
+    y_values = [train_loss, val_loss]
+    y_names = [TRAIN_LOSS, VALIDATION_LOSS]
+    y_colors = ["blue", "red"]
+    save_path = os.path.join(artifacts_path, EPOCH_TRAIL_VAL_LOSS)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Training vs Validation Loss", save_path=save_path)
+
+    # Precision, recall and f1 score
+    y_values = [precision, recall, f1score]
+    y_names = [PRECISION, RECALL, F1_SCORE]
+    y_colors = ["blue", "green", "grey"]
+    save_path = os.path.join(artifacts_path, EPOCH_PRF1_PLOT)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Precision Recall F1Score", save_path=save_path)
+
+
 def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder, split_extension=True):
     """
     Draws the keypoints for each image in the images_folder from respective .xml annotation file

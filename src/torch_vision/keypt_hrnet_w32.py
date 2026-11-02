@@ -19,29 +19,15 @@ import timm
 from PIL import Image
 from torch_vision.vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
 from torch_vision.keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
-from torch_vision.keypt_utils import create_keypts_output_infrastructure, generate_final_analytics
+from torch_vision.keypt_utils import create_keypts_output_infrastructure, generate_final_analytics, EPOCH, STEP, LR, LOSS, TRAIN_LOSS, VALIDATION_LOSS, MEAN_PIXEL_ERROR, MEDIAN_PIXEL_ERROR,PRECISION, RECALL, F1_SCORE
 from utils.model_utils import write_to_csv, read_from_csv
-
-EPOCH="Epoch"
-STEP="Step"
-LR="Lr"
-LOSS="Loss"
-TRAIN_LOSS="TrainLoss"
-VALIDATE_LOSS="ValidateLoss"
-MEAN_PIXEL_ERROR="Mean_PX_Error"
-MEDIAN_PIXEL_ERROR="Median_PX_Error"
-STEP_VS_LOSS_FILE="step_vs_loss.jpg"
-TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
-MAPS_FILE = "mAPs.jpg"
-PR_FILE = "precision_recall.jpg"
-PRECISION_PER_CLASS = "precision_per_class"
-RECALL_PER_CLASS = "recall_per_class"
-PRECISION = "precision"
-RECALL = "recall"
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 hrnet_std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+DISTANCE_THRESHOLD=5.0
+CONFIDENCE_THRESHOLD=0.2
 
 # Keep track of global steps
 steps = 0
@@ -283,7 +269,7 @@ def start_hrnet_training_validation(
               """)
 
   # Setting up the path for output and analytics and convert ids to names
-  model_path, artifacts_path, analytics_path, epoch_pixel_error_path, epoch_pr_path = create_keypts_output_infrastructure(output_path, model_name)
+  model_path, artifacts_path, analytics_path, epoch_results_path = create_keypts_output_infrastructure(output_path, model_name)
 
   # Display samples of dataset images 
   train_imgs = create_random_keypts_dataset_images(train_loader.dataset, idx_to_keypts, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
@@ -304,12 +290,27 @@ def start_hrnet_training_validation(
   best_median_px_error = math.inf 
   best_validation_loss = math.inf
   for epoch in range(num_epochs):
-    train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path)
-    eval_result = evaluate_one_epoch(model, val_loader, device, loss_func, epoch, num_epochs, batch_size, epoch_pixel_error_path)
+    avg_train_loss = train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path)
+    eval_result = evaluate_one_epoch_with_pr(model, val_loader, device, loss_func, epoch, num_epochs, batch_size)
+
+    # Append train loss to the eval_result  and change to create a dataframe for output
+    res = {
+      EPOCH: [epoch + 1],
+      TRAIN_LOSS: [avg_train_loss],
+      VALIDATION_LOSS: [eval_result[VALIDATION_LOSS]],
+      MEAN_PIXEL_ERROR: [eval_result[MEAN_PIXEL_ERROR]],
+      MEDIAN_PIXEL_ERROR: [eval_result[MEDIAN_PIXEL_ERROR]],
+      PRECISION: [eval_result[PRECISION]],
+      RECALL: [eval_result[RECALL]],
+      F1_SCORE: [eval_result[F1_SCORE]]
+    }
+    print(res)
+    if analytics_path:
+      write_to_csv(res, epoch_results_path)
 
     # Save the best model for least pixel error and least validation loss
-    curr_median_pixel_error = eval_result[MEDIAN_PIXEL_ERROR][0]
-    curr_validation_loss = eval_result[VALIDATE_LOSS][0]
+    curr_median_pixel_error = eval_result[MEDIAN_PIXEL_ERROR]
+    curr_validation_loss = eval_result[VALIDATION_LOSS]
     if curr_median_pixel_error < best_median_px_error and curr_validation_loss < best_validation_loss:
       best_median_px_error = curr_median_pixel_error
       best_validation_loss = curr_validation_loss
@@ -320,7 +321,7 @@ def start_hrnet_training_validation(
     if display:
       comp_img.show()
     
-  generate_final_analytics(analytics_path, epoch_pixel_error_path, artifacts_path)
+  generate_final_analytics(analytics_path, epoch_results_path, artifacts_path)
 
   print("\n--------------- TRAINING & VALIDATION COMPLETE ----------------")
 
@@ -363,7 +364,7 @@ def train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, nu
     steps += 1
     pbar.set_postfix(steps=f"{steps}", images=f"{images_so_far} / {len(train_loader.dataset)}", avg_loss=f"{curr_avg_loss:.4f}")
 
-    # Save the analytics
+    # Save the analytics on a 'step' level
     result = {
       EPOCH: [epoch + 1],
       STEP: [steps],
@@ -372,10 +373,11 @@ def train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, nu
       }
     if analytics_path:
       write_to_csv(result, analytics_path)
-    return running_train_loss / len(train_loader)
+  avg_training_loss = running_train_loss / len(train_loader)
+  return avg_training_loss
 
 @torch.no_grad()
-def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, batch_size, epoch_pixel_error_path=None):
+def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, batch_size):
   """
   Evaluates the scores of the validation dataset.
   """
@@ -441,23 +443,128 @@ def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, b
 
   # Final epoch reductions
   final_norm = max(total_valid_keypoints, 1.0)
-  final_val_loss = total_val_loss / final_norm
+  avg_val_loss = total_val_loss / final_norm
   final_mean_pixel_err = total_pixel_distance_error / final_norm
   final_median_pixel_error = (
       float(np.median(pixel_errors)) if pixel_errors else 0.0
   )
+  return final_mean_pixel_err, final_median_pixel_error, avg_val_loss
 
-  # Save analytics with a pd dataframe
-  result = {
-      EPOCH: [epoch + 1],
-      MEAN_PIXEL_ERROR: [final_mean_pixel_err],
-      MEDIAN_PIXEL_ERROR: [final_median_pixel_error],
-      VALIDATE_LOSS: [final_val_loss],
+def evaluate_one_epoch_with_pr(
+    model,
+    val_loader,
+    device,
+    loss_func,
+    epoch,
+    num_epochs,
+    conf_thresh=CONFIDENCE_THRESHOLD,
+    dist_thresh=DISTANCE_THRESHOLD,
+):
+  """
+  Evaluates validation loss, pixel errors, and Precision/Recall/F1 score.
+  """
+
+  model.eval()
+  pbar = tqdm.tqdm(
+      val_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Validate]"
+  )
+
+  total_val_loss = 0.0
+  total_valid_keypoints = 0.0
+  total_pixel_distance_error = 0.0
+  pixel_errors = []
+
+  total_tp = 0
+  total_fp = 0
+  total_fn = 0
+
+  with torch.no_grad():
+    for images, target_heatmaps, target_mask, class_id in pbar:
+      images = images.to(device, non_blocking=True)
+      target_heatmaps = target_heatmaps.to(device, non_blocking=True)
+      target_mask = target_mask.to(device, non_blocking=True)
+
+      # Sigmoid ensures heatmap values map to [0.0, 1.0] for confidence thresholding
+      pred_heatmaps = torch.sigmoid(model(images))
+
+      # 1. Masked MSE Loss
+      raw_loss = loss_func(pred_heatmaps, target_heatmaps)
+      avg_kpt_loss = raw_loss.mean(dim=[2, 3])
+      masked_loss = avg_kpt_loss * target_mask.squeeze(-1)
+
+      batch_valid_kpts = target_mask.sum().item()
+      total_val_loss += 0.5 * masked_loss.sum().item()
+      total_valid_keypoints += batch_valid_kpts
+
+      # 2. Extract peak coordinates and confidences
+      b, k, h_hm, w_hm = pred_heatmaps.shape
+      pred_flat = pred_heatmaps.reshape(b, k, -1)
+      targ_flat = target_heatmaps.reshape(b, k, -1)
+
+      pred_confs, pred_idx = torch.max(pred_flat, dim=2)
+      _, targ_idx = torch.max(targ_flat, dim=2)
+
+      # Scale to 256x192 canvas
+      pred_x = (pred_idx % w_hm).float() * 4.0
+      pred_y = (pred_idx // w_hm).float() * 4.0
+      targ_x = (targ_idx % w_hm).float() * 4.0
+      targ_y = (targ_idx // w_hm).float() * 4.0
+
+      euclidean_dist = torch.sqrt(
+          (pred_x - targ_x) ** 2 + (pred_y - targ_y) ** 2
+      )
+
+      # 3. Ground Truth vs Prediction Masks
+      is_gt_visible = target_mask.squeeze(-1) > 0  # [B, 24]
+      is_pred_positive = pred_confs >= conf_thresh  # [B, 24]
+      is_within_dist = euclidean_dist <= dist_thresh  # [B, 24]
+
+      # TP: GT visible, predicted positive, and within pixel threshold
+      tp = (is_gt_visible & is_pred_positive & is_within_dist).sum().item()
+
+      # FP: Predicted positive, but either GT was absent OR location was wrong
+      fp = (is_pred_positive & (~is_gt_visible | ~is_within_dist)).sum().item()
+
+      # FN: GT was visible, but either predicted negative OR location was wrong
+      fn = (is_gt_visible & (~is_pred_positive | ~is_within_dist)).sum().item()
+
+      total_tp += tp
+      total_fp += fp
+      total_fn += fn
+
+      # Pixel error tracking on ground-truth visible keypoints
+      if is_gt_visible.any():
+        valid_errs = euclidean_dist[is_gt_visible].cpu().numpy()
+        total_pixel_distance_error += valid_errs.sum()
+        pixel_errors.extend(valid_errs.tolist())
+
+  # 4. Final Metric Computations
+  final_norm = max(total_valid_keypoints, 1.0)
+  final_val_loss = total_val_loss / final_norm
+  final_mean_pixel_err = total_pixel_distance_error / final_norm
+  final_median_pixel_err = (
+      float(np.median(pixel_errors)) if pixel_errors else 0.0
+  )
+
+  precision = (
+      total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+  )
+  recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+  f1_score = (
+      (2 * precision * recall) / (precision + recall)
+      if (precision + recall) > 0
+      else 0.0
+  )
+
+  return {
+      EPOCH: epoch + 1,
+      VALIDATION_LOSS: final_val_loss,
+      MEAN_PIXEL_ERROR: final_mean_pixel_err,
+      MEDIAN_PIXEL_ERROR: final_median_pixel_err,
+      PRECISION: precision,
+      RECALL: recall,
+      F1_SCORE: f1_score
   }
-  if epoch_pixel_error_path:
-    write_to_csv(result, epoch_pixel_error_path)
-
-  return result
 
 @torch.no_grad()
 def create_groundtruth_prediction_comparison(model, device, val_dataset, image_indexes, epoch, id_to_keypts, score_threshold=0.0, artifacts_path=None):
@@ -663,7 +770,7 @@ def run_keydet_training():
                                   batch_size=64,
                                   output_path=output_path,
                                   comparison_images=comparisions,
-                                  score_threshold=0.1,
+                                  score_threshold=CONFIDENCE_THRESHOLD,
                                   display=True
                                   )
 
