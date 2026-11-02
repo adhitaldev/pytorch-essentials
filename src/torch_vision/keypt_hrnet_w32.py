@@ -19,7 +19,7 @@ import timm
 from PIL import Image
 from torch_vision.vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
 from torch_vision.keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
-from torch_vision.keypt_utils import create_keypts_output_infrastructure
+from torch_vision.keypt_utils import create_keypts_output_infrastructure, generate_final_analytics
 from utils.model_utils import write_to_csv, read_from_csv
 
 EPOCH="Epoch"
@@ -28,8 +28,8 @@ LR="Lr"
 LOSS="Loss"
 TRAIN_LOSS="TrainLoss"
 VALIDATE_LOSS="ValidateLoss"
-MEAN_PIXEL_ERROR="mean_px_error"
-MEDIAN_PIXEL_ERROR="median_px_error"
+MEAN_PIXEL_ERROR="Mean_PX_Error"
+MEDIAN_PIXEL_ERROR="Median_PX_Error"
 STEP_VS_LOSS_FILE="step_vs_loss.jpg"
 TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
 MAPS_FILE = "mAPs.jpg"
@@ -257,8 +257,8 @@ def start_hrnet_training_validation(
   samples_to_display=0,
   batch_size=64,
   output_path=".",
-  comparision_images=0,
-  score_threshold=0.1,
+  comparison_images=0,
+  score_threshold=0.0,
   display=False):
   """
   Starts the training and validation loop with the given parameters
@@ -277,7 +277,7 @@ def start_hrnet_training_validation(
             Device: {device}
             Batch Size: {batch_size}
             Output path: {output_path}
-            Comparision Images: {comparision_images}
+            Comparison Images: {comparison_images}
             Score Threshold: {score_threshold}\n
             Display: {display}
               """)
@@ -293,20 +293,36 @@ def start_hrnet_training_validation(
     train_imgs.show()
     val_imgs.show()
 
+  comparison_indexes = None
+  if comparison_images > 0:
+      comparison_indexes = [random.randint(0, len(val_loader.dataset) - 1) for _ in range(comparison_images)]
+
   # Training and validation through epochs
   model = model.to(device)
   global steps
   steps = 0
   best_median_px_error = math.inf 
+  best_validation_loss = math.inf
   for epoch in range(num_epochs):
     train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path)
     eval_result = evaluate_one_epoch(model, val_loader, device, loss_func, epoch, num_epochs, batch_size, epoch_pixel_error_path)
 
+    # Save the best model for least pixel error and least validation loss
     curr_median_pixel_error = eval_result[MEDIAN_PIXEL_ERROR][0]
-    if curr_median_pixel_error < best_median_px_error:
+    curr_validation_loss = eval_result[VALIDATE_LOSS][0]
+    if curr_median_pixel_error < best_median_px_error and curr_validation_loss < best_validation_loss:
       best_median_px_error = curr_median_pixel_error
-      print(f"Updating best median pixel error to {best_median_px_error} and saving model")
+      best_validation_loss = curr_validation_loss
+      print(f"Updating best median pixel error: {best_median_px_error} validation loss: {best_validation_loss} and saving model")
       torch.save(model.state_dict(), model_path)
+    
+    comp_img = create_groundtruth_prediction_comparison(model, device, val_loader.dataset, comparison_indexes, epoch, idx_to_keypts, score_threshold=score_threshold, artifacts_path=artifacts_path)
+    if display:
+      comp_img.show()
+    
+  generate_final_analytics(analytics_path, epoch_pixel_error_path, artifacts_path)
+
+  print("\n--------------- TRAINING & VALIDATION COMPLETE ----------------")
 
 def train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path):
   """
@@ -358,7 +374,7 @@ def train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, nu
       write_to_csv(result, analytics_path)
     return running_train_loss / len(train_loader)
 
-
+@torch.no_grad()
 def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, batch_size, epoch_pixel_error_path=None):
   """
   Evaluates the scores of the validation dataset.
@@ -443,6 +459,66 @@ def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, b
 
   return result
 
+@torch.no_grad()
+def create_groundtruth_prediction_comparison(model, device, val_dataset, image_indexes, epoch, id_to_keypts, score_threshold=0.0, artifacts_path=None):
+    """
+    Creates and returns a grid of side by side image comparion of groundtruth keypoints
+    with the predicted keypoints. Saves it if necessary.
+    """
+    if not val_dataset or not image_indexes:
+        print(f"{create_groundtruth_prediction_comparison.__name__}No dataset and/or images for groundtruth viewing")
+        return
+    img_tensors = []
+    model.eval()
+    print(f"Creating comparison visualization for epoch {epoch}... ")
+    for idx in image_indexes:
+      image, target_heatmaps, target_mask, class_id = val_dataset[idx]
+      target_heatmaps =target_heatmaps.unsqueeze(0)
+
+      adjusted_kpts = []
+      confs = []
+      names = []
+
+      # Ground truth image and keypoints
+      keypts, confidences = decode_heatmaps(target_heatmaps)
+      for idx, kp in enumerate(keypts):
+        h = kp[0]
+        w = kp[1]
+        adjusted_kpts.append((h, w))
+        confs.append(confidences[idx])
+        names.append(id_to_keypts[idx])
+      denorm_img = denormalize_image_tensor(image, hrnet_mean, hrnet_std)
+      pil_img = get_pil_image_from_torch_tensor(denorm_img)
+      pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
+      img_tensors.append(TF.to_tensor(pil_img))
+
+      # Predicted keypoints 
+      adjusted_kpts = []
+      confs = []
+      names = []
+      image = image.unsqueeze(0).to(device)
+      pred_heatmaps = torch.sigmoid(model(image))
+      keypts, confidences = decode_heatmaps(pred_heatmaps)
+      for idx, kp in enumerate(keypts):
+        w = kp[0]
+        h = kp[1]
+        adjusted_kpts.append((h, w))
+        confs.append(confidences[idx])
+        names.append(id_to_keypts[idx])
+      
+      denorm_img = denormalize_image_tensor(image.squeeze(0), hrnet_mean, hrnet_std)
+      pil_img = get_pil_image_from_torch_tensor(denorm_img)
+      pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
+      img_tensors.append(TF.to_tensor(pil_img))
+
+    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}", cols=2, cell_size=(IN_W * 2 , IN_H * 2))
+
+    # save if artifacts path is provided
+    if os.path.exists(artifacts_path):
+        img_name = f"epoch_{epoch + 1}.jpg"
+        output = os.path.join(artifacts_path, img_name)
+        img_grid.save(output)
+    return img_grid
 
 def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
   """
@@ -586,7 +662,7 @@ def run_keydet_training():
                                   samples_to_display=samples,
                                   batch_size=64,
                                   output_path=output_path,
-                                  comparision_images=comparisions,
+                                  comparison_images=comparisions,
                                   score_threshold=0.1,
                                   display=True
                                   )

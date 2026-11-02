@@ -411,7 +411,7 @@ def create_groundtruth_prediction_comparision(model, device, val_dataset, image_
         img_tensors.append(gt_img)
         img_tensors.append(pred_img)
 
-    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}")
+    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}", cols=2)
 
     # save if artifacts path is provided
     if os.path.exists(artifacts_path):
