@@ -8,6 +8,7 @@ import math
 import numpy as np
 import os
 import random
+import timeit
 import torch
 import tqdm
 import torch.nn as nn
@@ -673,6 +674,41 @@ def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, tit
       img_grid.save(output)
   return img_grid
 
+def infer_on_image(model, pil_img, id_to_keypoints):
+  """
+  Infers on an image
+  """
+  model.eval()
+  pil_img = pil_img.convert('RGB')
+  image_resized = pil_img.resize((IN_W, IN_H), Image.BILINEAR)
+  transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=hrnet_mean, std= hrnet_std)
+            ])
+  image_tensor = transform(image_resized)
+  image_tensor = image_tensor.unsqueeze(0)
+  with torch.no_grad():
+    begin = timeit.default_timer()
+    pred_heatmaps = torch.sigmoid(model(image_tensor))
+    end = timeit.default_timer()
+    keypts, confidences = decode_heatmaps(pred_heatmaps)
+  adjusted_kpts = []
+  confs = []
+  names = []
+  for idx, kp in enumerate(keypts):
+      w = kp[0]
+      h = kp[1]
+      adjusted_kpts.append((h, w))
+      confs.append(confidences[idx])
+      names.append(id_to_keypoints[idx])
+
+  denorm_img = denormalize_image_tensor(image_tensor.squeeze(0), hrnet_mean, hrnet_std)
+  pil_img = get_pil_image_from_torch_tensor(denorm_img)
+  pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
+  inf_time = end - begin
+  return pil_img, inf_time
+
+
 def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   """
   Simple test to create a dataset with heatmaps, get the first item from it,
@@ -715,6 +751,25 @@ def test_dataset_creation(img_dir, anno_dict, idx_to_class, idx_to_keypts):
   pil_img = get_pil_image_from_torch_tensor(denorm_img)
   annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=True)
 
+def get_trained_model(model_path, num_keypoints=9):
+  model = get_model_backbone(False)
+  model = modify_model_get_backbone(model)
+  device = "cuda" if torch.cuda.is_available() else "cpu"
+  model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=num_keypoints)
+  checkpoint = torch.load(model_path, map_location=device, weights_only=True)
+
+  # 3. Handle checkpoints saved either as raw state_dict or as a wrapper dict
+  if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+    state_dict = checkpoint["model_state_dict"]
+  elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+    state_dict = checkpoint["state_dict"]
+  else:
+    state_dict = checkpoint  # The checkpoint is the raw OrderedDict
+
+    # 4. Load weights into the model
+    model.load_state_dict(state_dict)
+  
+  return model
 
 def run_keydet_training():
    # Load the dog pose dataset and train the model
