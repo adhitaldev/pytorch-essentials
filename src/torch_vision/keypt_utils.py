@@ -1,62 +1,95 @@
 
 
 import os
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from dotenv import load_dotenv
 from xml.etree import ElementTree as ET
 from torchvision.transforms import v2 as T
-from keypt_hrnet_dataset import create_keypt_hrnet_dataset
+from utils.model_utils import read_from_csv
+from utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
 
-def prepare_key_pts_data(
-    train_images_path,
-    train_annotations_path,
-    val_images_path,
-    val_annotations_path,
-    keypt_labels: 'dict',
-    batch_size=64,
-    train_transforms=None,
-    val_transforms=None):
+LR="Lr"
+EPOCH="Epoch"
+STEP="Step"
+LOSS="Loss"
+ARTIFACTS_FOLDER="artifacts"
+MEAN_PIXEL_ERROR="Mean_PX_Error"
+MEDIAN_PIXEL_ERROR="Median_PX_Error"
+TRAIN_LOSS="AvTrainLoss"
+VALIDATION_LOSS="AvValidateLoss"
+PRECISION="Precision"
+RECALL="Recall"
+F1_SCORE="F1_Score"
+
+# Artifacts definitons
+ANALYTICS_FILE="analytics.csv"
+STEP_VS_LOSS_FILE="step_vs_loss.jpg"
+EPOCH_EVAL_RESULTS="eval_results.csv"
+EPOCH_PIXEL_ERROR_PLOT="pixel_errors.jpg"
+EPOCH_TRAIL_VAL_LOSS="train_vs_validate_loss.jpg"
+EPOCH_PRF1_PLOT ="precision_recall_f1.jpg"
+
+def create_keypts_output_infrastructure(output_path, model_name):
     """
-    Prepares data for key point detection based on the given parameters.
-    Returns data loaders for training and validation.
+    Creates the necessary folder strucutures to output the model, artifacts etc.
     """
-    print("\n--------------- PREPARING DATA IN PROGRESS ----------------")
-    print(f"Train Images Path: {train_images_path}")
-    print(f"Train Annotations Path: {train_annotations_path}")
-    print(f"Validate Images Path: {validation_images_path}")
-    print(f"Validate Annotations Path: {validation_annotations_path}")
-    print(f"Class labels: {class_labels}")
-    print(f"Batch size: {batch_size}")
+    folder_name = datetime.now().strftime(f"%Y%m%d_%H%M") + "_" + model_name
+    final_path = os.path.join(output_path, folder_name)
+    model_path = os.path.join(final_path, model_name + ".pt")
+    artifacts_path = os.path.join(final_path, ARTIFACTS_FOLDER)
+    analytics_path = os.path.join(final_path, ANALYTICS_FILE)
+    epoch_results_path = os.path.join(final_path, EPOCH_EVAL_RESULTS)
+    if not os.path.exists(artifacts_path):
+        os.makedirs(artifacts_path)
+    return model_path, artifacts_path, analytics_path, epoch_results_path
 
-    if not train_transforms:
-        train_transforms =  T.Compose([
-            T.RandomHorizontalFlip(),
-            T.RandomRotation(degrees=15),
-            T.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1),
-            T.Resize((224, 224))
-        ])
+def generate_final_analytics(analytics_path, epoch_results_path, artifacts_path):
+    """
+    Reads from the analytics files and then generates the artifacts
+    """
+    print(f"Preparing analytics ...")
+    # Getting and plotting data from the analytics file
+    data = read_from_csv(analytics_path)
+    print(f"Reading from analytics file: {analytics_path}")
+    steps = data[STEP].tolist()
+    losses = data[LOSS].tolist()
+    save_path=os.path.join(artifacts_path, STEP_VS_LOSS_FILE)
+    plot_x_y(steps, losses, x_label="steps", y_label="loss", title="Step vs Loss", save_path=save_path)
 
-    if not validate_transforms:
-        validate_transforms = T.Compose([
-        T.Resize((224, 224)),
-        T.ToDtype(torch.float32, scale=True)
-    ])
+    # Getting and plotting data from the pixel error file
+    print(f"Reading from pixel error file: {epoch_results_path}")
+    mdata = read_from_csv(epoch_results_path)
+    epochs = mdata[EPOCH].tolist()
+    train_loss = mdata[TRAIN_LOSS].tolist()
+    val_loss = mdata[VALIDATION_LOSS].tolist()
+    mean_error = mdata[MEAN_PIXEL_ERROR].tolist()
+    median_error = mdata[MEDIAN_PIXEL_ERROR].tolist()
+    precision = mdata[PRECISION].tolist()
+    recall = mdata[RECALL].tolist()
+    f1score = mdata[F1_SCORE].tolist()
 
-    train_dataset = create_keypt_dataset(train_images_path, 
-                                        train_annotations_path,
-                                        keypt_labels, class_labels,
-                                        train_transforms)
+    # Mean and median pixel errors on epochs
+    y_values = [mean_error, median_error]
+    y_names = ["Mean Px Error", "Median Px Error"]
+    y_colors = ["green", "orange"]
+    save_path = os.path.join(artifacts_path, EPOCH_PIXEL_ERROR_PLOT)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Keypoints Pixel Errors", save_path=save_path)
 
-    val_dataset = create_keypt_dataset(validation_images_path, 
-                                        validation_annotations_path,
-                                        keypt_labels, class_labels,
-                                        validate_transforms) 
-    
-    # Data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
-    return train_dataset, val_dataset, train_loader, val_loader
+    # Training vs Validation loss on epochs
+    y_values = [train_loss, val_loss]
+    y_names = [TRAIN_LOSS, VALIDATION_LOSS]
+    y_colors = ["blue", "red"]
+    save_path = os.path.join(artifacts_path, EPOCH_TRAIL_VAL_LOSS)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Training vs Validation Loss", save_path=save_path)
+
+    # Precision, recall and f1 score
+    y_values = [precision, recall, f1score]
+    y_names = [PRECISION, RECALL, F1_SCORE]
+    y_colors = ["blue", "green", "grey"]
+    save_path = os.path.join(artifacts_path, EPOCH_PRF1_PLOT)
+    plot_multiY_x(y_values=y_values, y_names=y_names, y_colors=y_colors, x_values=epochs, x_title="Epochs", title="Precision Recall F1Score", save_path=save_path)
 
 
 def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder, split_extension=True):
@@ -172,57 +205,3 @@ def annotate_keypoints_from_xml_images(images_folder, annotations_folder, output
             cimg.save(img_out_path)
     print(f"{len(images) - len(missing_annotations)} images annotated and saved to {output_folder}")
 
-def annotate_key_points_on_image(input_img_path: 'str', keypoints: 'list[tuple]', names: 'list[str]',  confidences: 'list[float]', output_path: None, show: True):
-    """
-    Annotates the given keypoints with names and confidences on the provided image.
-    Shows and/or outputs the annotated image if requested.
-    """
-    if not input_img_path or not keypoints or not names or not confidences:
-        print("Incomplete data for annotations. Provide image path, keypoints, names, and confidences")
-
-    if len(keypoints) != len(names) != len(confidences):
-        print(f"Keypoints, names, and confidences don't have the same length for annotations")
-        return
-    image_pil = Image.open(input_img_path).convert('RGB')
-
-    # Redraw and save the image with the annotated points
-    try:
-        font = ImageFont.truetype("Arial.ttf", size=16)
-    except IOError:
-        font = ImageFont.load_default()
-    x_offset = 10
-    y_offset = 10
-    radius = 2
-
-    cimg = image_pil.copy()
-    draw = ImageDraw.Draw(cimg)
-    for keypoint, name, confidence in zip(keypoints, names, confidences):
-        # Draw a ellipse around the x and y for visibility
-        x, y = keypoint[0], keypoint[1]
-        bounding_box = [x - radius, y - radius, x + radius, y + radius]
-        draw.ellipse(bounding_box, fill="red")
-        # Draw the text
-        text_coords = (x + x_offset, y - y_offset)
-        txt_to_draw = name + "_" + str(confidence)
-        draw.text(text_coords, name, fill="black", font=font)
-
-    # save
-    if output_path:
-        img_out_path = os.path.join(output_folder, img)
-        cimg.save(img_out_path)
-    if show:
-        cimg.show()
-
-
-
-if __name__ == "__main__":
-    env_file = ".env.keypts_detection"
-    if os.path.exists(env_file):
-      load_dotenv(env_file)
-    else:
-      load_dotenv()
-    
-    images_folder = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH", "")
-    annotations_folder = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH", "")
-    output_folder = os.getenv("KEYPT_DETECTION_OUTPUT_PATH", "")
-    annotate_keypoints_from_xml_images(images_folder, annotations_folder, output_folder)

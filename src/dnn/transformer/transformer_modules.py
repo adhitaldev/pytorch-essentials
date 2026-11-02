@@ -10,7 +10,7 @@ class Head(nn.Module):
     Single Attention head with an attention function that maps a query and a set 
     of key-value pairs to an output.
     """
-    def __init__(self, head_size, d_model, block_size, dropout):
+    def __init__(self, head_size, n_embd, block_size, dropout):
         super().__init__()
         # nn.Linear creates a fully connected dense layer and applies
         # affine transformation/creates weight W and bias b as in y = xW^t + b
@@ -129,13 +129,25 @@ class Block(nn.Module):
         head_size = n_embd // n_head
         self.attention = MultiHeadAttention(n_head, head_size, n_embd, block_size, dropout)
 
+class MultiHeadAttention(nn.Module):
+    """
+    Multiple heads in parallel
+    """
+    def __init__(self, n_head, head_size, n_embd, block_size, dropout):
+        super().__init_()
+        self.heads = nn.ModuleList([Head(head_size, n_embd, block_size, dropout) for _ in range(n_head)])
+        self.proj = nn.Linear(head_size * n_head, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        ## TO DO
 
 class TransformerLM(nn.Module):
     """
     The full model.
     Notes: The dims of token embedding and positional embedding must match as they are added together.
     """
-    def __init__(self, vocab_size, d_model, block_size, n_head, n_layer, dropout):
+    def __init__(self, vocab_size, n_embd, block_size, n_head, n_layer, dropout):
         super().__init__()
         # Size of the context window
         self.block_size = block_size
@@ -146,8 +158,7 @@ class TransformerLM(nn.Module):
         # position of each token in the context window (block_size)
         # Where could each token be in the context window?
         self.position_embedding = nn.Embedding(block_size, d_model)
-        self.blocks = nn.Sequential()
-
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head, block_size, dropout) for _ in range(n_layer)])
 
 
 

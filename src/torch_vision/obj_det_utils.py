@@ -13,10 +13,10 @@ from torchmetrics.detection import MeanAveragePrecision
 from torchvision.transforms import v2 as T
 from torchvision.ops import box_iou
 import  torchvision.utils as vutils
-from .obj_det_dataset import create_voc_dataset
-from .vision_utils import gridify_multiple_tensor_images
-from ..utils.model_utils import write_to_csv, read_from_csv
-from ..utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
+from torch_vision.obj_det_dataset import create_voc_dataset
+from torch_vision.vision_utils import gridify_multiple_tensor_images
+from utils.model_utils import write_to_csv, read_from_csv
+from utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
 
 ANALYTICS_FILE="analytics.csv"
 EPOCH_MAP_FILE="mAP.csv"
@@ -28,8 +28,6 @@ LR="Lr"
 LOSS="Loss"
 TRAIN_LOSS="TrainLoss"
 VALIDATE_LOSS="ValidateLoss"
-MAP="mAP"
-MAP_05="mAP_0.5"
 STEP_VS_LOSS_FILE="step_vs_loss.jpg"
 TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
 MAPS_FILE = "mAPs.jpg"
@@ -411,7 +409,7 @@ def create_groundtruth_prediction_comparision(model, device, val_dataset, image_
         img_tensors.append(gt_img)
         img_tensors.append(pred_img)
 
-    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}")
+    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}", cols=2)
 
     # save if artifacts path is provided
     if os.path.exists(artifacts_path):

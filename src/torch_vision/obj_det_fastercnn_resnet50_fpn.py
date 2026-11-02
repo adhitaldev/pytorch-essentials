@@ -18,10 +18,10 @@ from torchvision.transforms import v2 as T
 from torchvision.io import decode_image
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from PIL import Image
-from src.utils.model_utils import get_model_classes_from_weights_meta
-from src.torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor
 from dotenv import load_dotenv
-from .obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss
+from utils.model_utils import get_model_classes_from_weights_meta
+from torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor
+from torch_vision.obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss
 
 # Use this environment file in the torch_vision package for environment variables
 env_file = f".env.object_detection"
@@ -50,65 +50,69 @@ def modify_model(model, num_classes: int):
         params.requires_grad = True
     return model
 
+def run_obj_det_training():
+  if os.path.exists(env_file):
+    load_dotenv(env_file)
+  else:
+    load_dotenv()
+    
+  # Load the model and define the classes to detect
+  model, classes = load_model()
+
+  # Replace the box predictor for this model
+  class_labels = ast.literal_eval(os.getenv("OBJ_DETECTION_CLASS_LABELS"))
+  total_classes = len(class_labels) + 1 # background is zero
+  modify_model(model, total_classes)
+
+  print("Loading the environment parameters for the fastercnn_restnet50_fpn model training ...")
+  train_images_path = os.getenv("OBJ_DETECTION_TRAIN_IMAGES_PATH")
+  train_annotations_path = os.getenv("OBJ_DETECTION_TRAIN_ANNOTATIONS_PATH")
+  validate_images_path = os.getenv("OBJ_DETECTION_VALIDATE_IMAGES_PATH")
+  validate_annotations_path = os.getenv("OBJ_DETECTION_VALIDATE_ANNOTATIONS_PATH")
+  num_samples= int(os.getenv("OBJ_DETECTION_NUM_SAMPLES", "10"))
+  batch_size = int(os.getenv("OBJ_DETECTION_BATCH_SIZE", "64"))
+
+  print(f"Total display samples: {num_samples}")
+
+  train_dataset, validate_dataset, train_loader, val_loader = prepare_obj_det_data(
+                                                                                train_images_path=train_images_path, 
+                                                                                train_annotations_path=train_annotations_path,
+                                                                                validation_images_path=validate_images_path, 
+                                                                                validation_annotations_path=validate_annotations_path, 
+                                                                                class_labels=class_labels,
+                                                                                batch_size=batch_size
+                                                                                )
+
+
+  # Training and validation
+  print(f"Starting training and validation ...")
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  num_epochs = int(os.getenv("OBJ_DETECTION_NUM_EPOCHS", 2))
+  learning_rate = 1e-5
+  optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+
+  num_comparison_images = int(os.getenv("OBJ_DETECTION_COMPARISION_SAMPLES"), 5)
+  score_threshold = float(os.getenv("OBJ_DETECTION_SCORE_THRESHOLD"))
+  output_path=os.getenv("OBJ_DETECTION_OUTPUT_PATH")
+
+  start_obj_det_training_validation(
+                                model,
+                                train_loader, 
+                                val_loader,
+                                class_labels,
+                                optimizer,
+                                num_epochs,
+                                device,
+                                samples_to_display=num_samples,
+                                batch_size=batch_size,
+                                output_path=output_path,
+                                comparison_images=num_comparison_images,
+                                score_threshold=score_threshold
+                              )
+
+
 if __name__=="__main__":
-    if os.path.exists(env_file):
-      load_dotenv(env_file)
-    else:
-      load_dotenv()
-      
-    # Load the model and define the classes to detect
-    model, classes = load_model()
-
-    # Replace the box predictor for this model
-    class_labels = ast.literal_eval(os.getenv("OBJ_DETECTION_CLASS_LABELS"))
-    total_classes = len(class_labels) + 1 # background is zero
-    modify_model(model, total_classes)
-
-    print("Loading the environment parameters for the fastercnn_restnet50_fpn model training ...")
-    train_images_path = os.getenv("OBJ_DETECTION_TRAIN_IMAGES_PATH")
-    train_annotations_path = os.getenv("OBJ_DETECTION_TRAIN_ANNOTATIONS_PATH")
-    validate_images_path = os.getenv("OBJ_DETECTION_VALIDATE_IMAGES_PATH")
-    validate_annotations_path = os.getenv("OBJ_DETECTION_VALIDATE_ANNOTATIONS_PATH")
-    num_samples= int(os.getenv("OBJ_DETECTION_NUM_SAMPLES", "10"))
-    batch_size = int(os.getenv("OBJ_DETECTION_BATCH_SIZE", "64"))
-  
-    print(f"Total display samples: {num_samples}")
-
-    train_dataset, validate_dataset, train_loader, val_loader = prepare_obj_det_data(
-                                                                                  train_images_path=train_images_path, 
-                                                                                  train_annotations_path=train_annotations_path,
-                                                                                  validation_images_path=validate_images_path, 
-                                                                                  validation_annotations_path=validate_annotations_path, 
-                                                                                  class_labels=class_labels,
-                                                                                  batch_size=batch_size
-                                                                                  )
-
- 
-    # Training and validation
-    print(f"Starting training and validation ...")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_epochs = int(os.getenv("OBJ_DETECTION_NUM_EPOCHS", 2))
-    learning_rate = 1e-5
-    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
-
-    num_comparison_images = int(os.getenv("OBJ_DETECTION_COMPARISION_SAMPLES"), 5)
-    score_threshold = float(os.getenv("OBJ_DETECTION_SCORE_THRESHOLD"))
-    output_path=os.getenv("OBJ_DETECTION_OUTPUT_PATH")
-
-    start_obj_det_training_validation(
-                                  model,
-                                  train_loader, 
-                                  val_loader,
-                                  class_labels,
-                                  optimizer,
-                                  num_epochs,
-                                  device,
-                                  samples_to_display=num_samples,
-                                  batch_size=batch_size,
-                                  output_path=output_path,
-                                  comparison_images=num_comparison_images,
-                                  score_threshold=score_threshold
-                                )
+    run_obj_det_training()
 
 
     # Test the model with a test image

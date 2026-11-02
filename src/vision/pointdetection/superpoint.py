@@ -15,16 +15,16 @@ load_dotenv()
 
 def run_point_detector_example():
     print(' Running SuperPoint keypoint detector example... ')
-    img1 = os.getenv("TEST_IMAGE_1", "pytorch-essentials/src/vision/data/test/img1.jpg")
-    img2 = os.getenv("TEST_IMAGE_2", "pytorch-essentials/src/vision/data/test/img2.jpg")
+    img1 = os.getenv("TEST_IMAGE_1", "pytorch-essentials/src/vision/data/test/target1.jpg")
+    img2 = os.getenv("TEST_IMAGE_2", "pytorch-essentials/src/vision/data/test/target2.png")
     print(img1, img2)
     if not os.path.exists(img1) or not os.path.exists(img2):
         print('Test Image 1 or 2 does not exist')
         return
 
-    img1 = Image.open(img1)
-    img2 = Image.open(img2)
-    images = [img1, img2]
+    img1 = Image.open(img1).convert("RGB")
+    img2 = Image.open(img2).convert("RGB")
+    images = [img1]
 
     # Detecting interesting points on an image
     processor = AutoImageProcessor.from_pretrained("magic-leap-community/superpoint")
@@ -54,8 +54,8 @@ def run_point_detector_example():
         alpha=0.8
     )
 
-    for idx in range(total_pts):
-        plt.text(keypoints[idx, 0], keypoints[idx, 1], scores[idx], ha='center', va='bottom')
+    # for idx in range(total_pts):
+    #     plt.text(keypoints[idx, 0], keypoints[idx, 1], scores[idx], ha='center', va='bottom')
 
 
     plt.imshow(img1)

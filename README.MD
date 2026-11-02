@@ -5,6 +5,9 @@ This repo covers the essentials functionalities/concepts of the Pytorch library 
 ## src/torch_fundamentals
 Provides various tutorials on pytorch - compiled mostly from the Coursera's 'Pytorch for Deep Learning' specialization course by Laurence Moroney. It contains fundamentals to advanced Pytorch topics.
 
+## src/torch_vision
+Provides samples, utilies, documentation, and implementations of various vision networks for object detection and key point detection in PyTorch.
+
 ## src/dnn/
 It has implementations of some neural networks while emphasizing documentation and learnability from the written code.
 
@@ -27,18 +30,15 @@ Contains some essentials and often overlooked basic topics in Python like classe
 Includes some modules on AI based vision models like point detectors, examples of torch data handling, point detectors etc. There is some work in progress here.
 
 ## Setup
-Create a Python venv (>=3.12) environment and then activate the environment. 
+The project is packaged with `pyproject.toml` using a `src` layout. Create a Python venv (>=3.12), activate it, and install the project in editable mode from the repository root.
 
 ```bash
 pytorch-essentials> python -m venv .venv
 pytorch-essentials> source .venv/bin/activate
+(.venv)pytorch-essentials> pip install -e .
 ```
 
-Install the requirements
-
-```bash
-(.venv)pytorch-essentials> pip install -r requirements.txt
-```
+Editable mode installs the dependencies and makes these packages importable from `src`: `dnn`, `torch_fundamentals`, `torch_vision`, `utils`, and `vision`. Later edits under `src` apply without reinstalling.
 
 Helpful Pytorch Links
 Documentation: https://docs.pytorch.org/docs/stable/index.html
