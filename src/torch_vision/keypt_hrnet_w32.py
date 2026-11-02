@@ -4,9 +4,10 @@ In HRNetW32, every modules downstream of 'incre_modules' make up the complete Im
 in the official HRNet documentation.
 Original paper: "Deep High-Resolution Represetntaion Learning for Human Pose Estimation" (Sun, et. all)
 """
+import math
 import numpy as np
-import random
 import os
+import random
 import torch
 import tqdm
 import torch.nn as nn
@@ -20,6 +21,23 @@ from torch_vision.vision_utils import annotate_key_points_on_image, visualize_te
 from torch_vision.keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
 from torch_vision.keypt_utils import create_keypts_output_infrastructure
 from utils.model_utils import write_to_csv, read_from_csv
+
+EPOCH="Epoch"
+STEP="Step"
+LR="Lr"
+LOSS="Loss"
+TRAIN_LOSS="TrainLoss"
+VALIDATE_LOSS="ValidateLoss"
+MEAN_PIXEL_ERROR="mean_px_error"
+MEDIAN_PIXEL_ERROR="median_px_error"
+STEP_VS_LOSS_FILE="step_vs_loss.jpg"
+TRAIN_VS_VALIDATE_LOSS_FILE="train_vs_validate_loss.jpg"
+MAPS_FILE = "mAPs.jpg"
+PR_FILE = "precision_recall.jpg"
+PRECISION_PER_CLASS = "precision_per_class"
+RECALL_PER_CLASS = "recall_per_class"
+PRECISION = "precision"
+RECALL = "recall"
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -265,7 +283,7 @@ def start_hrnet_training_validation(
               """)
 
   # Setting up the path for output and analytics and convert ids to names
-  model_path, artifacts_path, analytics_path, epoch_map_path, epoch_pr_path = create_keypts_output_infrastructure(output_path, model_name)
+  model_path, artifacts_path, analytics_path, epoch_pixel_error_path, epoch_pr_path = create_keypts_output_infrastructure(output_path, model_name)
 
   # Display samples of dataset images 
   train_imgs = create_random_keypts_dataset_images(train_loader.dataset, idx_to_keypts, num_images=samples_to_display, title=f"{model_name}_{samples_to_display}_Training_Samples", artifacts_path=artifacts_path)
@@ -279,11 +297,18 @@ def start_hrnet_training_validation(
   model = model.to(device)
   global steps
   steps = 0
+  best_median_px_error = math.inf 
   for epoch in range(num_epochs):
-    train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, num_epochs, batch_size, analytics_path)
-    evaluate(model,val_loader, device, epoch, num_epochs, batch_size)
+    train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path)
+    eval_result = evaluate_one_epoch(model, val_loader, device, loss_func, epoch, num_epochs, batch_size, epoch_pixel_error_path)
 
-def train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, num_epochs, batch_size, analytics_path):
+    curr_median_pixel_error = eval_result[MEDIAN_PIXEL_ERROR][0]
+    if curr_median_pixel_error < best_median_px_error:
+      best_median_px_error = curr_median_pixel_error
+      print(f"Updating best median pixel error to {best_median_px_error} and saving model")
+      torch.save(model.state_dict(), model_path)
+
+def train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path):
   """
   Trains a single epoch of the HRnet pose estimator
   """
@@ -323,43 +348,49 @@ def train_one_epoch(model, train_loader, optimizer, loss_func, device, epoch, nu
     pbar.set_postfix(steps=f"{steps}", images=f"{images_so_far} / {len(train_loader.dataset)}", avg_loss=f"{curr_avg_loss:.4f}")
 
     # Save the analytics
+    result = {
+      EPOCH: [epoch + 1],
+      STEP: [steps],
+      LR: optimizer.param_groups[0]['lr'],
+      LOSS: [curr_avg_loss]
+      }
     if analytics_path:
-      write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [curr_avg_loss]}, analytics_path)
+      write_to_csv(result, analytics_path)
     return running_train_loss / len(train_loader)
 
-@torch.no_grad()
-def evaluate(model,val_loader, device, epoch, num_epochs, batch_size):
+
+def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, batch_size, epoch_pixel_error_path=None):
   """
-  Evaluates the scores of the validation dataset
+  Evaluates the scores of the validation dataset.
   """
   model.eval()
-  pbar = tqdm.tqdm(val_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Validate]")
-  images_so_far = 0
-  total_val_loss = 0
-  total_valid_keypoints = 0
+  pbar = tqdm.tqdm(
+      val_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Validate]"
+  )
+
+  total_val_loss = 0.0
+  total_valid_keypoints = 0.0
   total_pixel_distance_error = 0.0
+  pixel_errors = []  # Stores individual keypoint pixel errors
+
   for idx, (images, target_heatmaps, target_mask, class_id) in enumerate(pbar, start=1):
-    images = images.to(device)
-    target_heatmaps = target_heatmaps.to(device)
-    target_mask = target_mask.to(device)
+    images = images.to(device, non_blocking=True)
+    target_heatmaps = target_heatmaps.to(device, non_blocking=True)
+    target_mask = target_mask.to(device, non_blocking=True)
+
     pred_heatmaps = model(images)
 
-    # Raw element wise squared differences [batch_size, num_keypts, 64, 48]
+    # 1. Masked MSE Loss
     raw_loss = loss_func(pred_heatmaps, target_heatmaps)
-
-    # Average spatial dimension loss
-    avg_kpt_loss = raw_loss.mean(dim=[2, 3])
-
-    # Visibility mask 
+    avg_kpt_loss = raw_loss.mean(dim=[2, 3])  # Spatial reduction -> [B, 24]
     masked_loss = avg_kpt_loss * target_mask.squeeze(-1)
-    valid_keypoints = torch.clamp(target_mask.sum(), min=1.0) # avoid div by zero if there are no valid key_pts
-    loss = 0.5 * (masked_loss.sum() / valid_keypoints)
-    
-    total_val_loss += loss.item()
-    total_valid_keypoints += valid_keypoints.item()
 
-    # 2. Keypoint Accuracy Metric (Mean L2 Pixel Distance on 256x192 canvas)
-    # Extract peak (x, y) coordinates on 64x48 heatmap
+    batch_valid_kpts = target_mask.sum().item()
+    # Accumulate unnormalized loss sum and keypoint count
+    total_val_loss += 0.5 * masked_loss.sum().item()
+    total_valid_keypoints += batch_valid_kpts
+
+    # 2. Pixel Distance Metrics (256x192 canvas)
     b, k, h_hm, w_hm = pred_heatmaps.shape
     pred_flat = pred_heatmaps.reshape(b, k, -1)
     targ_flat = target_heatmaps.reshape(b, k, -1)
@@ -367,42 +398,50 @@ def evaluate(model,val_loader, device, epoch, num_epochs, batch_size):
     _, pred_idx = torch.max(pred_flat, dim=2)
     _, targ_idx = torch.max(targ_flat, dim=2)
 
-    # Heatmap coordinates scaled up by 4 to match 256x192 image canvas
     pred_x = (pred_idx % w_hm).float() * 4.0
     pred_y = (pred_idx // w_hm).float() * 4.0
     targ_x = (targ_idx % w_hm).float() * 4.0
     targ_y = (targ_idx // w_hm).float() * 4.0
 
-    # Compute Euclidean distance per keypoint: [B, 24]
-    euclidean_dist = torch.sqrt((pred_x - targ_x) ** 2 + (pred_y - targ_y) ** 2)
+    euclidean_dist = torch.sqrt(
+        (pred_x - targ_x) ** 2 + (pred_y - targ_y) ** 2
+    )
 
-    # Accumulate error only for visible landmarks
     valid_mask = target_mask.squeeze(-1) > 0
     if valid_mask.any():
-      total_pixel_distance_error += euclidean_dist[valid_mask].sum().item()
+      valid_errs = euclidean_dist[valid_mask].cpu().numpy()
+      total_pixel_distance_error += valid_errs.sum()
+      pixel_errors.extend(valid_errs.tolist())
 
-    # Running display
-    running_avg_loss = total_val_loss / max(total_valid_keypoints, 1.0)
-    running_pixel_err = total_pixel_distance_error / max(
-        total_valid_keypoints, 1.0
-    )
+    # Running display normalized by keypoints seen so far
+    running_norm = max(total_valid_keypoints, 1.0)
+    running_avg_loss = total_val_loss / running_norm
+    running_pixel_err = total_pixel_distance_error / running_norm
+
     pbar.set_postfix(
         val_loss=f"{running_avg_loss:.5f}",
         mean_px_err=f"{running_pixel_err:.2f}px",
     )
 
-  final_val_loss = total_val_loss / max(total_valid_keypoints, 1.0)
-  final_mean_pixel_err = total_pixel_distance_error / max(
-      total_valid_keypoints, 1.0
+  # Final epoch reductions
+  final_norm = max(total_valid_keypoints, 1.0)
+  final_val_loss = total_val_loss / final_norm
+  final_mean_pixel_err = total_pixel_distance_error / final_norm
+  final_median_pixel_error = (
+      float(np.median(pixel_errors)) if pixel_errors else 0.0
   )
 
-  print(
-      f"Validation Summary - Loss: {final_val_loss:.6f} | Mean Keypoint Error:"
-      f" {final_mean_pixel_err:.2f} px"
-  )
+  # Save analytics with a pd dataframe
+  result = {
+      EPOCH: [epoch + 1],
+      MEAN_PIXEL_ERROR: [final_mean_pixel_err],
+      MEDIAN_PIXEL_ERROR: [final_median_pixel_error],
+      VALIDATE_LOSS: [final_val_loss],
+  }
+  if epoch_pixel_error_path:
+    write_to_csv(result, epoch_pixel_error_path)
 
-  return final_val_loss, final_mean_pixel_err
-
+  return result
 
 
 def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, title="", padding=10, class_colors=["blue", "red", "green"], artifacts_path=None):
