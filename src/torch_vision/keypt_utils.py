@@ -10,6 +10,7 @@ from torchvision.transforms import v2 as T
 from utils.model_utils import read_from_csv
 from utils.data_plotter import plot_x_y, plot_multiX_y, plot_multiY_x
 
+ENV_FILE_NAME = ".env.keypts_detection"
 LR="Lr"
 EPOCH="Epoch"
 STEP="Step"
@@ -30,6 +31,16 @@ EPOCH_EVAL_RESULTS="eval_results.csv"
 EPOCH_PIXEL_ERROR_PLOT="pixel_errors.jpg"
 EPOCH_TRAIL_VAL_LOSS="train_vs_validate_loss.jpg"
 EPOCH_PRF1_PLOT ="precision_recall_f1.jpg"
+
+def load_keypts_env():
+    """Load .env.keypts_detection from the repository root, independent of cwd."""
+    env_file = Path(__file__).resolve().parents[2] / ENV_FILE_NAME
+    if not env_file.is_file():
+        raise FileNotFoundError(f"Keypoint detection env file not found: {env_file}")
+    if not load_dotenv(env_file):
+        raise RuntimeError(f"Unable to load env file: {env_file}")
+    print(f"Loaded environment from {env_file}")
+    return env_file
 
 def create_keypts_output_infrastructure(output_path, model_name):
     """

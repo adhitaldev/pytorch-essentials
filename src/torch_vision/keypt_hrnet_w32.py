@@ -16,11 +16,12 @@ from torchvision import transforms
 from torchvision.transforms import v2 as T
 import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import timm
 from PIL import Image
 from torch_vision.vision_utils import annotate_key_points_on_image, visualize_tensor_image, get_pil_image_from_torch_tensor, denormalize_image_tensor, gridify_multiple_tensor_images
 from torch_vision.keypt_hrnet_dataset import HRnetKeypointDetectionDataset, create_keypt_hrnet_dataset, get_annotation_dict_from_dog_pose_images, get_idx_keypoints_dog_pose_dataset, get_idx_class_dog_pose_dataset
-from torch_vision.keypt_utils import create_keypts_output_infrastructure, generate_final_analytics, EPOCH, STEP, LR, LOSS, TRAIN_LOSS, VALIDATION_LOSS, MEAN_PIXEL_ERROR, MEDIAN_PIXEL_ERROR,PRECISION, RECALL, F1_SCORE
+from torch_vision.keypt_utils import create_keypts_output_infrastructure, generate_final_analytics, load_keypts_env, EPOCH, STEP, LR, LOSS, TRAIN_LOSS, VALIDATION_LOSS, MEAN_PIXEL_ERROR, MEDIAN_PIXEL_ERROR,PRECISION, RECALL, F1_SCORE
 from utils.model_utils import write_to_csv, read_from_csv
 
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
@@ -33,14 +34,13 @@ CONFIDENCE_THRESHOLD=0.2
 # Keep track of global steps
 steps = 0
 
-class HRNetCustomPoseEstimator(torch.nn.Module):
-    import torch
-import torch.nn as nn
-
 class HRNetCustomPoseEstimator(nn.Module):
-  def __init__(self, backbone, num_keypoints=9):
+  def __init__(self, backbone, num_keypoints=9, freeze_backbone=True):
     super().__init__()
     self.backbone = backbone
+    if freeze_backbone:
+      for param in self.backbone.parameters():
+        param.requires_grad = False
 
     # 1x1 Conv mapping 32 channels to num_keypoints
     self.keypoint_head = nn.Conv2d(
@@ -238,6 +238,7 @@ def start_hrnet_training_validation(
   idx_to_class,
   idx_to_keypts,
   optimizer,
+  lr_scheduler,
   loss_func,
   num_epochs,
   device,
@@ -291,8 +292,11 @@ def start_hrnet_training_validation(
   best_median_px_error = math.inf 
   best_validation_loss = math.inf
   for epoch in range(num_epochs):
-    avg_train_loss = train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, num_epochs, batch_size, analytics_path)
+    avg_train_loss = train_one_epoch(model, train_loader, device, optimizer,loss_func, epoch, num_epochs, batch_size, analytics_path)
     eval_result = evaluate_one_epoch_with_pr(model, val_loader, device, loss_func, epoch, num_epochs, batch_size)
+
+    # Update the learning rate scheduler after each epoch
+    lr_scheduler.step()  
 
     # Append train loss to the eval_result  and change to create a dataframe for output
     res = {
@@ -303,7 +307,8 @@ def start_hrnet_training_validation(
       MEDIAN_PIXEL_ERROR: [eval_result[MEDIAN_PIXEL_ERROR]],
       PRECISION: [eval_result[PRECISION]],
       RECALL: [eval_result[RECALL]],
-      F1_SCORE: [eval_result[F1_SCORE]]
+      F1_SCORE: [eval_result[F1_SCORE]],
+      LR: [lr_scheduler.get_last_lr()[0]]
     }
     print(res)
     if analytics_path:
@@ -318,7 +323,7 @@ def start_hrnet_training_validation(
       print(f"Updating best median pixel error: {best_median_px_error} validation loss: {best_validation_loss} and saving model")
       torch.save(model.state_dict(), model_path)
     
-    comp_img = create_groundtruth_prediction_comparison(model, device, val_loader.dataset, comparison_indexes, epoch, idx_to_keypts, score_threshold=score_threshold, artifacts_path=artifacts_path)
+    comp_img = create_groundtruth_prediction_comparison(model, device, val_loader.dataset, comparison_indexes, epoch + 1, idx_to_keypts, score_threshold=score_threshold, artifacts_path=artifacts_path)
     if display:
       comp_img.show()
     
@@ -619,11 +624,11 @@ def create_groundtruth_prediction_comparison(model, device, val_dataset, image_i
       pil_img = annotate_key_points_on_image(pil_img, keypoints=adjusted_kpts, names=names,  confidences=confs, output_path=None, show=False)
       img_tensors.append(TF.to_tensor(pil_img))
 
-    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch + 1}", cols=2, cell_size=(IN_W * 2 , IN_H * 2))
+    img_grid = gridify_multiple_tensor_images(img_tensors, title=f"After Epoch {epoch}", cols=2, cell_size=(IN_W * 2 , IN_H * 2))
 
     # save if artifacts path is provided
     if os.path.exists(artifacts_path):
-        img_name = f"epoch_{epoch + 1}.jpg"
+        img_name = f"epoch_{epoch}.jpg"
         output = os.path.join(artifacts_path, img_name)
         img_grid.save(output)
     return img_grid
@@ -773,9 +778,7 @@ def get_trained_model(model_path, num_keypoints=9):
 
 def run_keydet_training():
    # Load the dog pose dataset and train the model
-  env_file = f".env.keypts_detection"
-  from dotenv import load_dotenv
-  load_dotenv(env_file)
+  load_keypts_env()
   train_img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
   train_anno_dir = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH")
   val_img_dir = os.getenv("KEYPT_DETECTION_VALIDATE_IMAGES_PATH")
@@ -805,8 +808,15 @@ def run_keydet_training():
                                                                   idx_to_keypts)
 
   num_epochs = int(os.getenv("KEYPT_DETECTION_NUM_EPOCHS", 2))
-  learning_rate = 1e-5
-  optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+  learning_rate = float(os.getenv("KEYPT_DETECTION_LEARNING_RATE", 0.0001))
+  #optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+  optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
+                               lr=learning_rate, betas=(0.9, 0.999),
+                                eps=1e-8,
+                                weight_decay=1e-4)
+
+  lr_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
+  
   loss_func = nn.MSELoss(reduction="none") # 'none' enables manual visibility masking
   output_path = os.getenv("KEYPT_DETECTION_OUTPUT_PATH")
   samples = int(os.getenv("KEYPT_DETECTION_NUM_SAMPLES"))
@@ -818,6 +828,7 @@ def run_keydet_training():
                                   idx_to_class,
                                   idx_to_keypts,
                                   optimizer,
+                                  lr_scheduler,
                                   loss_func,
                                   num_epochs,
                                   device,
