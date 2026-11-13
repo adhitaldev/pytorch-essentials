@@ -5,6 +5,9 @@ in the official HRNet documentation.
 Original paper: "Deep High-Resolution Represetntaion Learning for Human Pose Estimation" (Sun, et. all)
 """
 import math
+from xml.parsers.expat import model
+from matplotlib.pyplot import step
+from matplotlib.pyplot import step
 import numpy as np
 import os
 import random
@@ -13,7 +16,7 @@ import torch
 import tqdm
 import torch.nn as nn
 from torchvision import transforms
-from torchvision.transforms import v2 as T
+from torchvision.transforms import v2 as V2T
 import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -28,8 +31,8 @@ IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 hrnet_std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-DISTANCE_THRESHOLD=5.0
-CONFIDENCE_THRESHOLD=0.2
+DISTANCE_THRESHOLD=8.0
+CONFIDENCE_THRESHOLD=0.10
 
 # Keep track of global steps
 steps = 0
@@ -136,6 +139,7 @@ def decode_heatmaps(heatmaps, img_size=(256, 192)):
 
 def get_model_backbone(only_features=True):
     model = timm.create_model("hrnet_w32", pretrained=True, f_only=only_features)
+    print(f"Loaded HRNetW32 model with only_features={only_features}. Model architecture:\n{model}")
     return model
 
 def modify_model_get_backbone(model):
@@ -201,17 +205,20 @@ def prepare_key_pts_data(
     Returns data loaders for training and validation.
     """
     print("\n--------------- PREPARING HRNET KEYPOINT DETECTOR DATA IN PROGRESS ----------------")
-    # if not train_transforms:
-    #     train_transforms =  transforms.Compose([
-    #         # transforms.RandomHorizontalFlip(),
-    #         # transforms.RandomRotation(degrees=15),
-    #         transforms.ColorJitter(brightness=(0.5, 1.4), contrast=(0.8, 1.5), saturation=0.1)
-    #     ])
+    if not train_transforms:
+        train_transforms =  V2T.Compose([
+             V2T.RandomAffine(degrees=30, scale=(0.8, 1.2), fill=128),
+             V2T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+             V2T.ToDtype(torch.float32, scale=True),
+             V2T.Normalize(mean=hrnet_mean, std=hrnet_std)
+        ])
 
-    # if not val_transforms:
-    #     val_transforms = transforms.Compose([
-    #     T.ToDtype(torch.float32, scale=True)
-    # ])
+    # Validation transfroms (normalize only)
+    if not val_transforms:
+        val_transforms = V2T.Compose([
+            V2T.ToDtype(torch.float32, scale=True),
+            V2T.Normalize(mean=hrnet_mean, std=hrnet_std)
+        ])
 
     train_dataset = create_keypt_hrnet_dataset(train_images_path, 
                                         train_annotations_dict,
@@ -301,7 +308,7 @@ def start_hrnet_training_validation(
     # Append train loss to the eval_result  and change to create a dataframe for output
     res = {
       EPOCH: [epoch + 1],
-      TRAIN_LOSS: [avg_train_loss],
+      TRAIN_LOSS: [1],
       VALIDATION_LOSS: [eval_result[VALIDATION_LOSS]],
       MEAN_PIXEL_ERROR: [eval_result[MEAN_PIXEL_ERROR]],
       MEDIAN_PIXEL_ERROR: [eval_result[MEDIAN_PIXEL_ERROR]],
@@ -382,6 +389,56 @@ def train_one_epoch(model, train_loader, device, optimizer, loss_func, epoch, nu
   avg_training_loss = running_train_loss / len(train_loader)
   return avg_training_loss
 
+def quick_train_test(model, device, loss_func,train_loader, optimizer, num_iterations=100):
+  print(f"Starting a quick train test on a single batch for {num_iterations} iterations to verify training loop...")
+  # Extract exactly one batch
+  images, target_heatmaps, target_mask, _ = next(iter(train_loader))
+  images = images.to(device)
+  target_heatmaps = target_heatmaps.to(device)
+  target_mask = target_mask.to(device)
+
+  model.train()
+  # Run {num_iterations} iterations (steps) on this single batch
+  for step in range(num_iterations):
+    optimizer.zero_grad()
+    pred_heatmaps = model(images)
+
+    raw_loss = loss_func(pred_heatmaps, target_heatmaps)
+    avg_kpt_loss = raw_loss.mean(dim=[2, 3])
+    masked_loss = avg_kpt_loss * target_mask.squeeze(-1)
+    valid_keypoints = torch.clamp(target_mask.sum(), min=1.0)
+    loss = 0.5 * (masked_loss.sum() / valid_keypoints)
+
+    loss.backward()
+    optimizer.step()
+
+    if (step + 1) % 20 == 0:
+      print(f"Iteration {step + 1}/{num_iterations} - Loss: {loss.item():.6f}")
+
+  # Quick evaluation of the same batch
+  model.eval()
+  with torch.no_grad():
+    pred_heatmaps = model(images)  # [B, 24, 64, 48]
+
+    # Decode peak coordinates
+    b, k, h_hm, w_hm = pred_heatmaps.shape
+    pred_flat = pred_heatmaps.reshape(b, k, -1)
+    targ_flat = target_heatmaps.reshape(b, k, -1)
+
+    _, pred_idx = torch.max(pred_flat, dim=2)
+    _, targ_idx = torch.max(targ_flat, dim=2)
+
+    pred_x = (pred_idx % w_hm).float() * 4.0
+    pred_y = (pred_idx // w_hm).float() * 4.0
+    targ_x = (targ_idx % w_hm).float() * 4.0
+    targ_y = (targ_idx // w_hm).float() * 4.0
+
+    dist = torch.sqrt((pred_x - targ_x) ** 2 + (pred_y - targ_y) ** 2)
+    valid_mask = target_mask.squeeze(-1) > 0
+
+    batch_mean_err = dist[valid_mask].mean().item()
+    print(f"Batch Mean Pixel Error: {batch_mean_err:.2f} px")
+
 @torch.no_grad()
 def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, batch_size):
   """
@@ -456,6 +513,12 @@ def evaluate_one_epoch(model, val_loader, device, loss_func, epoch,num_epochs, b
   )
   return final_mean_pixel_err, final_median_pixel_error, avg_val_loss
 
+
+import numpy as np
+import torch
+import tqdm
+
+
 def evaluate_one_epoch_with_pr(
     model,
     val_loader,
@@ -463,13 +526,10 @@ def evaluate_one_epoch_with_pr(
     loss_func,
     epoch,
     num_epochs,
-    conf_thresh=CONFIDENCE_THRESHOLD,
-    dist_thresh=DISTANCE_THRESHOLD,
+    conf_thresh=CONFIDENCE_THRESHOLD,  # 0.10 is calibrated for linear Gaussian peaks
+    dist_thresh=DISTANCE_THRESHOLD,  # Matches PCK threshold on 256x192 canvas
 ):
-  """
-  Evaluates validation loss, pixel errors, and Precision/Recall/F1 score.
-  """
-
+  """Evaluates validation loss, pixel errors, and Precision/Recall/F1 score."""
   model.eval()
   pbar = tqdm.tqdm(
       val_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Validate]"
@@ -490,11 +550,12 @@ def evaluate_one_epoch_with_pr(
       target_heatmaps = target_heatmaps.to(device, non_blocking=True)
       target_mask = target_mask.to(device, non_blocking=True)
 
-      # Sigmoid ensures heatmap values map to [0.0, 1.0] for confidence thresholding
-      pred_heatmaps = torch.sigmoid(model(images))
+      # 1. Forward Pass (Linear outputs matching MSE training)
+      raw_heatmaps = model(images)  # [B, K, H, W]
+      b, k, h_hm, w_hm = raw_heatmaps.shape
 
-      # 1. Masked MSE Loss
-      raw_loss = loss_func(pred_heatmaps, target_heatmaps)
+      # 2. Masked MSE Loss
+      raw_loss = loss_func(raw_heatmaps, target_heatmaps)
       avg_kpt_loss = raw_loss.mean(dim=[2, 3])
       masked_loss = avg_kpt_loss * target_mask.squeeze(-1)
 
@@ -502,49 +563,80 @@ def evaluate_one_epoch_with_pr(
       total_val_loss += 0.5 * masked_loss.sum().item()
       total_valid_keypoints += batch_valid_kpts
 
-      # 2. Extract peak coordinates and confidences
-      b, k, h_hm, w_hm = pred_heatmaps.shape
-      pred_flat = pred_heatmaps.reshape(b, k, -1)
+      # 3. Peak Finding
+      pred_flat = raw_heatmaps.reshape(b, k, -1)
       targ_flat = target_heatmaps.reshape(b, k, -1)
 
-      pred_confs, pred_idx = torch.max(pred_flat, dim=2)
-      _, targ_idx = torch.max(targ_flat, dim=2)
+      pred_confs, pred_idx = torch.max(pred_flat, dim=2)  # [B, K]
+      _, targ_idx = torch.max(targ_flat, dim=2)  # [B, K]
 
-      # Scale to 256x192 canvas
-      pred_x = (pred_idx % w_hm).float() * 4.0
-      pred_y = (pred_idx // w_hm).float() * 4.0
+      px = (pred_idx % w_hm).long()  # [B, K]
+      py = (pred_idx // w_hm).long()  # [B, K]
+
       targ_x = (targ_idx % w_hm).float() * 4.0
       targ_y = (targ_idx // w_hm).float() * 4.0
+
+      # 4. Vectorized Continuous Sub-Pixel Refinement (Zero GPU stalls)
+      px_plus = torch.clamp(px + 1, max=w_hm - 1)
+      px_minus = torch.clamp(px - 1, min=0)
+      py_plus = torch.clamp(py + 1, max=h_hm - 1)
+      py_minus = torch.clamp(py - 1, min=0)
+
+      b_idx = torch.arange(b, device=device).view(b, 1).expand(b, k)
+      k_idx = torch.arange(k, device=device).view(1, k).expand(b, k)
+
+      # Gather central neighbors directly on GPU
+      dx = (
+          raw_heatmaps[b_idx, k_idx, py, px_plus]
+          - raw_heatmaps[b_idx, k_idx, py, px_minus]
+      )
+      dy = (
+          raw_heatmaps[b_idx, k_idx, py_plus, px]
+          - raw_heatmaps[b_idx, k_idx, py_minus, px]
+      )
+
+      # Interior bounds mask (px in [1, W-2] and py in [1, H-2])
+      valid_interior = (px > 0) & (px < w_hm - 1) & (py > 0) & (py < h_hm - 1)
+
+      shift_x = torch.zeros_like(dx)
+      shift_y = torch.zeros_like(dy)
+
+      # Continuous parabolic interpolation bounded to [-0.5, 0.5] heatmap px
+      shift_x[valid_interior] = (
+          torch.clamp(dx[valid_interior] * 0.25, -0.5, 0.5) * 4.0
+      )
+      shift_y[valid_interior] = (
+          torch.clamp(dy[valid_interior] * 0.25, -0.5, 0.5) * 4.0
+      )
+
+      pred_x = (px.float() * 4.0) + shift_x
+      pred_y = (py.float() * 4.0) + shift_y
 
       euclidean_dist = torch.sqrt(
           (pred_x - targ_x) ** 2 + (pred_y - targ_y) ** 2
       )
 
-      # 3. Ground Truth vs Prediction Masks
-      is_gt_visible = target_mask.squeeze(-1) > 0  # [B, 24]
-      is_pred_positive = pred_confs >= conf_thresh  # [B, 24]
-      is_within_dist = euclidean_dist <= dist_thresh  # [B, 24]
+      # 5. Metrics Accumulation
+      is_gt_visible = target_mask.squeeze(-1) > 0  # [B, K]
+      is_pred_positive = pred_confs >= conf_thresh  # [B, K]
+      is_within_dist = euclidean_dist <= dist_thresh  # [B, K]
 
-      # TP: GT visible, predicted positive, and within pixel threshold
-      tp = (is_gt_visible & is_pred_positive & is_within_dist).sum().item()
+      total_tp += (
+          (is_gt_visible & is_pred_positive & is_within_dist).sum().item()
+      )
+      total_fp += (
+          (is_pred_positive & (~is_gt_visible | ~is_within_dist)).sum().item()
+      )
+      total_fn += (
+          (is_gt_visible & (~is_pred_positive | ~is_within_dist)).sum().item()
+      )
 
-      # FP: Predicted positive, but either GT was absent OR location was wrong
-      fp = (is_pred_positive & (~is_gt_visible | ~is_within_dist)).sum().item()
-
-      # FN: GT was visible, but either predicted negative OR location was wrong
-      fn = (is_gt_visible & (~is_pred_positive | ~is_within_dist)).sum().item()
-
-      total_tp += tp
-      total_fp += fp
-      total_fn += fn
-
-      # Pixel error tracking on ground-truth visible keypoints
       if is_gt_visible.any():
         valid_errs = euclidean_dist[is_gt_visible].cpu().numpy()
         total_pixel_distance_error += valid_errs.sum()
         pixel_errors.extend(valid_errs.tolist())
 
-  # 4. Final Metric Computations
+  # 6. Reductions
   final_norm = max(total_valid_keypoints, 1.0)
   final_val_loss = total_val_loss / final_norm
   final_mean_pixel_err = total_pixel_distance_error / final_norm
@@ -569,7 +661,7 @@ def evaluate_one_epoch_with_pr(
       MEDIAN_PIXEL_ERROR: final_median_pixel_err,
       PRECISION: precision,
       RECALL: recall,
-      F1_SCORE: f1_score
+      F1_SCORE: f1_score,
   }
 
 @torch.no_grad()
@@ -639,11 +731,11 @@ def create_random_keypts_dataset_images(dataset, id_to_keypts, num_images=0, tit
   and adds a title and padding if requested. Saves it if necessary.
   """
   if not dataset:
-      print(f"{create_random_dataset_images.__name__} No dataset provided to draw samples")
+      print(f"{create_random_keypts_dataset_images.__name__} No dataset provided to draw samples")
       return
 
   if  num_images <= 0:
-      print(f"{create_random_dataset_images.__name__} Number of images to draw <= 0")
+      print(f"{create_random_keypts_dataset_images.__name__} Number of images to draw <= 0")
       return
 
   indexes = [random.randint(0, len(dataset) - 1) for _ in range(num_images)]
@@ -776,7 +868,7 @@ def get_trained_model(model_path, num_keypoints=9):
   
   return model
 
-def run_keydet_training():
+def run_keydet_training(quick_test=False):
    # Load the dog pose dataset and train the model
   load_keypts_env()
   train_img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
@@ -792,7 +884,7 @@ def run_keydet_training():
     # Get the modified model
   model = get_model_backbone(False)
   model = modify_model_get_backbone(model)
-  model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=len(idx_to_keypts))
+  model = HRNetCustomPoseEstimator(backbone=model, num_keypoints=len(idx_to_keypts), freeze_backbone=False)
   device = "cuda" if torch.cuda.is_available() else "cpu"
 
   # To create a test dataset, select an item and display it, uncomment the following line
@@ -810,36 +902,46 @@ def run_keydet_training():
   num_epochs = int(os.getenv("KEYPT_DETECTION_NUM_EPOCHS", 2))
   learning_rate = float(os.getenv("KEYPT_DETECTION_LEARNING_RATE", 0.0001))
   #optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
-  optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
-                               lr=learning_rate, betas=(0.9, 0.999),
-                                eps=1e-8,
-                                weight_decay=1e-4)
+  # optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
+  #                              lr=learning_rate, betas=(0.9, 0.999),
+  #                               eps=1e-8,
+  #                               weight_decay=1e-4)
 
-  lr_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
+  optimizer = torch.optim.AdamW(
+      [
+          {"params": model.backbone.parameters(), "lr": 1e-4},
+          {"params": model.keypoint_head.parameters(), "lr": 1e-3},
+      ],
+      weight_decay=1e-4,
+  )
+  lr_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
   
   loss_func = nn.MSELoss(reduction="none") # 'none' enables manual visibility masking
   output_path = os.getenv("KEYPT_DETECTION_OUTPUT_PATH")
   samples = int(os.getenv("KEYPT_DETECTION_NUM_SAMPLES"))
   comparisions = int(os.getenv("KEYPT_DETECTION_COMPARISION_SAMPLES"))
-  start_hrnet_training_validation(
-                                  model, 
-                                  train_loader,
-                                  val_loader,
-                                  idx_to_class,
-                                  idx_to_keypts,
-                                  optimizer,
-                                  lr_scheduler,
-                                  loss_func,
-                                  num_epochs,
-                                  device,
-                                  samples_to_display=samples,
-                                  batch_size=64,
-                                  output_path=output_path,
-                                  comparison_images=comparisions,
-                                  score_threshold=CONFIDENCE_THRESHOLD,
-                                  display=True
-                                  )
+  if not quick_test:
+    start_hrnet_training_validation(
+                                    model, 
+                                    train_loader,
+                                    val_loader,
+                                    idx_to_class,
+                                    idx_to_keypts,
+                                    optimizer,
+                                    lr_scheduler,
+                                    loss_func,
+                                    num_epochs,
+                                    device,
+                                    samples_to_display=samples,
+                                    batch_size=8,
+                                    output_path=output_path,
+                                    comparison_images=comparisions,
+                                    score_threshold=CONFIDENCE_THRESHOLD,
+                                    display=True
+                                    )
+  else:
+    quick_train_test(model, device, loss_func,train_loader, optimizer, num_iterations=200)
 
 
 if __name__ == "__main__":
-  run_keydet_training()
+  run_keydet_training(quick_test=False)

@@ -9,9 +9,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision.transforms import v2 as T
+from torchvision.transforms.v2 import functional as F
 from torchvision import tv_tensors, transforms
 from torch_vision.vision_utils import visualize_tensor_image, annotate_key_points_on_image
+
 
 img_extensions =('.jpg', 'jpeg', '.png', 'jpeg')
 anno_extensions = '.json'
@@ -155,30 +156,67 @@ class HRnetKeypointDetectionDataset(Dataset):
 
         return torch.from_numpy(heatmaps), torch.from_numpy(mask)
 
+    # def __getitem__(self, idx):
+    #     img_name = self.images[idx]
+
+    #     # Get the annotation value from the image name key
+    #     item = self.annotations_dict[img_name]
+
+    #     # Read the image
+    #     img = os.path.join(self.images_dir, self.images[idx])
+
+    #     # Open the image and convert to tensor, resize to target sizez
+    #     # and apply transformation
+    #     image = Image.open(img).convert('RGB')
+    #     orig_w, orig_h = image.size
+    #     image_resized = image.resize((self.target_width, self.target_height), Image.BILINEAR)
+    
+    #     image_tensor = self.transform(image_resized)
+
+    #     # Rescale the keypoints coordinates to match resized dimenstions
+    #     scale_x = self.target_width / orig_w
+    #     scale_y = self.target_height / orig_h
+
+    #     raw_kpts = item["keypoints"]
+    #     scaled_kpts = []
+    #     for k_idx in range(self.num_keypts):
+    #         # For each key point it comes in this order (x, y, visibility). It's already normmalized
+    #         x_norm = raw_kpts[k_idx * 3]
+    #         y_norm = raw_kpts[k_idx * 3 + 1]
+    #         viz = raw_kpts[k_idx * 3 + 2]
+    #         if viz > 0:
+    #             x_pixel = x_norm * self.target_width
+    #             y_pixel = y_norm * self.target_height
+    #         else:
+    #             x_pixel, y_pixel = 0.0, 0.0
+    #         scaled_kpts.append([x_pixel, y_pixel, viz])
+    
+    #     # Generate the heatmaps and visibility mask
+    #     target_heatmaps, target_mask = self._generate_heatmaps(scaled_kpts)
+
+    #     # Extract class idx
+    #     class_idx = item["class_id"]
+    #     class_id = torch.tensor(class_idx, dtype=torch.long)
+    #     return image_tensor, target_heatmaps, target_mask, class_id
+
+
     def __getitem__(self, idx):
         img_name = self.images[idx]
-
-        # Get the annotation value from the image name key
         item = self.annotations_dict[img_name]
 
-        # Read the image
-        img = os.path.join(self.images_dir, self.images[idx])
+        # 1. Read and resize image
+        img_path = os.path.join(self.images_dir, img_name)
+        image = Image.open(img_path).convert("RGB")
+        image_resized = image.resize(
+            (self.target_width, self.target_height), Image.BILINEAR
+        )
 
-        # Open the image and convert to tensor, resize to target sizez
-        # and apply transformation
-        image = Image.open(img).convert('RGB')
-        orig_w, orig_h = image.size
-        image_resized = image.resize((self.target_width, self.target_height), Image.BILINEAR)
-        image_tensor = self.transform(image_resized)
-
-        # Rescale the keypoints coordinates to match resized dimenstions
-        scale_x = self.target_width / orig_w
-        scale_y = self.target_height / orig_h
-
+        # 2. Rescale normalized keypoints to target pixel dimensions
         raw_kpts = item["keypoints"]
-        scaled_kpts = []
+        coords = []
+        visibilities = []
+
         for k_idx in range(self.num_keypts):
-            # For each key point it comes in this order (x, y, visibility). It's already normmalized
             x_norm = raw_kpts[k_idx * 3]
             y_norm = raw_kpts[k_idx * 3 + 1]
             viz = raw_kpts[k_idx * 3 + 2]
@@ -187,12 +225,50 @@ class HRnetKeypointDetectionDataset(Dataset):
                 y_pixel = y_norm * self.target_height
             else:
                 x_pixel, y_pixel = 0.0, 0.0
-            scaled_kpts.append([x_pixel, y_pixel, viz])
-    
-        # Generate the heatmaps and visibility mask
+
+            coords.append([x_pixel, y_pixel])
+            visibilities.append(viz)
+
+        # 3. Apply joint geometric & photometric transforms
+        if self.transform is not None:
+            # Wrap image and keypoints into tv_tensors so v2 transforms update both simultaneously
+            # Note: canvas_size in tv_tensors expects (height, width)
+            img_tv = tv_tensors.Image(F.pil_to_tensor(image_resized))
+            kpts_tv = tv_tensors.KeyPoints(
+                torch.tensor(coords, dtype=torch.float32),
+                canvas_size=(self.target_height, self.target_width),
+            )
+
+            image_tensor, kpts_tv = self.transform(img_tv, kpts_tv)
+            aug_coords = kpts_tv.tolist()
+        else:
+            image_tensor = F.to_dtype(
+                F.pil_to_tensor(image_resized), torch.float32, scale=True
+            )
+            aug_coords = coords
+
+        # 4. Reconstruct scaled_kpts and invalidate keypoints pushed out of bounds
+        scaled_kpts = []
+        for k_idx in range(self.num_keypts):
+            x_aug, y_aug = aug_coords[k_idx]
+            viz = visibilities[k_idx]
+
+            # If rotation/zoom pushed a visible keypoint outside the image canvas, set viz = 0
+            if viz > 0 and (
+                x_aug < 0
+                or x_aug >= self.target_width
+                or y_aug < 0
+                or y_aug >= self.target_height
+            ):
+                viz = 0
+                x_aug, y_aug = 0.0, 0.0
+
+            scaled_kpts.append([x_aug, y_aug, viz])
+
+        # 5. Generate the heatmaps and visibility mask
         target_heatmaps, target_mask = self._generate_heatmaps(scaled_kpts)
 
-        # Extract class idx
+        # 6. Extract class idx
         class_idx = item["class_id"]
         class_id = torch.tensor(class_idx, dtype=torch.long)
         return image_tensor, target_heatmaps, target_mask, class_id
@@ -288,9 +364,8 @@ def get_idx_class_dog_pose_dataset():
     return idx_to_class
 
 if __name__ == "__main__":
-    env_file = f".env.keypts_detection"
-    from dotenv import load_dotenv
-    load_dotenv(env_file)
+    from keypoints_detection.keypt_utils import load_keypts_env
+    load_keypts_env()
     img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
     anno_dir = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH")
 
