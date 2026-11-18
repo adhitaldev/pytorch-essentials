@@ -5,21 +5,31 @@ import os
 import ast
 import json
 import torch
+import random
 from pathlib import Path
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 from torchvision.transforms.v2 import functional as F
 from torchvision import tv_tensors, transforms
 from torch_vision.vision_utils import visualize_tensor_image, annotate_key_points_on_image
 
-
+# Uses the dog pose dataset from Ultralytics
 img_extensions =('.jpg', 'jpeg', '.png', 'jpeg')
 anno_extensions = '.json'
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 hrnet_std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
+FLIP_PAIRS = [
+    (0, 6),  # L_Front_Paw  <-> R_Front_Paw
+    (1, 7),  # L_Front_Knee <-> R_Front_Knee
+    (2, 8),  # L_Front_Elbow <-> R_Front_Elbow
+    (3, 9),  # L_Rear_Paw   <-> R_Rear_Paw
+    (4, 10),  # L_Rear_Hock  <-> R_Rear_Hock
+    (5, 11),  # L_Rear_Stifle <-> R_Rear_Stifle
+    (14, 15),  # L_Ear        <-> R_Ear
+    (18, 19),  # L_Eye        <-> R_Eye
+]
 
 class HRnetKeypointDetectionDataset(Dataset):
     """
@@ -52,7 +62,8 @@ class HRnetKeypointDetectionDataset(Dataset):
                 idx_to_class=None,
                 idx_to_keypts=None, 
                 input_size=(IN_H, IN_W),
-                sigma=2):
+                sigma=2,
+                is_train=True):
 
         self.images_dir = images_dir
         self.annotations_dict = annotations_dict
@@ -61,6 +72,7 @@ class HRnetKeypointDetectionDataset(Dataset):
         self.num_keypts = len(self.idx_to_keypts) # This is the total number of keypoints to learn about
         self.target_height, self.target_width = input_size
         self.sigma = 2
+        self.is_train = is_train
 
         # HRnet stage 4 output spatial size is downsampled by a factor of 4
         self.downsample_factor = 4
@@ -76,6 +88,7 @@ class HRnetKeypointDetectionDataset(Dataset):
                 transforms.Normalize(mean=hrnet_mean, std= hrnet_std)
             ])
 
+
         print(f"\n--- Creating {HRnetKeypointDetectionDataset.__name__} ---")
         print(f"Image dir: {self.images_dir}")
         print(f"Length annotation dict: {len(self.annotations_dict)}")
@@ -85,6 +98,7 @@ class HRnetKeypointDetectionDataset(Dataset):
         print(f"Total keypoints: {self.num_keypts}")
         print(f"Target Height: {self.target_height} Target Width: {self.target_width}")
         print(f"Heatmap Sigma: {self.sigma} Height: {self.heatmap_height} Width: {self.heatmap_width}")
+        print(f"Is training: {self.is_train}")
 
         # sort out the files
         self.images = set()
@@ -229,6 +243,27 @@ class HRnetKeypointDetectionDataset(Dataset):
             coords.append([x_pixel, y_pixel])
             visibilities.append(viz)
 
+                # ------------------ HORIZONTAL FLIP (WITH INDEX SWAPPING) ------------------
+        if self.is_train and random.random() < 0.5:
+            # A. Mirror the PIL image horizontally
+            image_resized = ImageOps.mirror(image_resized)
+
+            # B. Mirror the x-coordinates for visible keypoints
+            for k_idx in range(self.num_keypts):
+                if visibilities[k_idx] > 0:
+                    coords[k_idx][0] = (self.target_width - 1.0) - coords[k_idx][0]
+
+            # C. Swap Left/Right symmetric keypoint pairs (both coords and visibility)
+            for left_idx, right_idx in FLIP_PAIRS:
+                coords[left_idx], coords[right_idx] = (
+                    coords[right_idx],
+                    coords[left_idx],
+                )
+                visibilities[left_idx], visibilities[right_idx] = (
+                    visibilities[right_idx],
+                    visibilities[left_idx],
+                )
+
         # 3. Apply joint geometric & photometric transforms
         if self.transform is not None:
             # Wrap image and keypoints into tv_tensors so v2 transforms update both simultaneously
@@ -279,7 +314,8 @@ def create_keypt_hrnet_dataset(images_dir,
                 idx_to_class=None,
                 idx_to_keypts=None, 
                 input_size=(IN_H, IN_W),
-                sigma=2):
+                sigma=2,
+                is_train=True):
     """
     Creates a keypoint dataset with the given params and returns them.
     """
@@ -287,7 +323,7 @@ def create_keypt_hrnet_dataset(images_dir,
         idx_to_class = {0: 'UnknownClass'}
     if not idx_to_keypts:
         idx_to_keypts = {0: 'UnknownKeypt'}
-    return HRnetKeypointDetectionDataset(images_dir, annotations_dict, transforms, idx_to_class, idx_to_keypts, input_size, sigma)
+    return HRnetKeypointDetectionDataset(images_dir, annotations_dict, transforms, idx_to_class, idx_to_keypts, input_size, sigma,is_train)
 
 def get_annotation_dict_from_dog_pose_images(annotation_dir):
     """
@@ -364,7 +400,7 @@ def get_idx_class_dog_pose_dataset():
     return idx_to_class
 
 if __name__ == "__main__":
-    from keypoints_detection.keypt_utils import load_keypts_env
+    from torch_vision.keypt_utils import load_keypts_env
     load_keypts_env()
     img_dir = os.getenv("KEYPT_DETECTION_TRAIN_IMAGES_PATH")
     anno_dir = os.getenv("KEYPT_DETECTION_TRAIN_ANNOTATIONS_PATH")
@@ -393,4 +429,3 @@ if __name__ == "__main__":
     print(f"target mask: {target_mask}")
     print(f"target_heapmaps: Shape: {target_heatmaps.shape} Value:{target_heatmaps}")
     visualize_tensor_image(img, label="test keypoints")
-

@@ -97,6 +97,7 @@ def start_obj_det_training_validation(
                                   val_loader,
                                   class_labels,
                                   optimizer,
+                                  lr_scheduler,
                                   num_epochs,
                                   device,
                                   samples_to_display=0,
@@ -117,6 +118,7 @@ def start_obj_det_training_validation(
             Total Validation Images: {len(val_loader.dataset)}
             Class Labels: {class_labels}
             Optimizer: {optimizer}
+            Learning Rate Scheduler: {lr_scheduler}
             Total Epochs: {num_epochs}
             Device: {device}
             Batch Size: {batch_size}
@@ -149,7 +151,7 @@ def start_obj_det_training_validation(
         comparison_indexes = [random.randint(0, len(val_loader.dataset) - 1) for _ in range(comparison_images)]
 
     for epoch in range(num_epochs): 
-        train_loss = train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path)
+        train_loss = train_one_obj_det_epoch(model, train_loader, optimizer,lr_scheduler, device, epoch, num_epochs, batch_size, analytics_path)
         # Evaluation
         val_loss = get_validation_loss(model, val_loader, device)
         metrics = evaluate_mAP(model, val_loader, device, epoch, num_epochs, batch_size)
@@ -183,7 +185,7 @@ def start_obj_det_training_validation(
 
     print("\n--------------- TRAINING & VALIDATION COMPLETE ----------------")
 
-def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_epochs, batch_size, analytics_path):
+def train_one_obj_det_epoch(model, train_loader, optimizer, lr_scheduler, device, epoch, num_epochs, batch_size, analytics_path):
     """
     Trains a single epoch of a object detection model
     """
@@ -204,6 +206,7 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
       loss = sum(loss_dict.values())
       loss.backward()
       optimizer.step()
+      lr_scheduler.step()
       running_train_loss += loss.item()
       images_so_far += len(images)
       global steps
@@ -212,7 +215,7 @@ def train_one_obj_det_epoch(model, train_loader, optimizer, device, epoch, num_e
     
       # Save the analytics
       if analytics_path:
-        write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: optimizer.param_groups[0]['lr'], LOSS: [loss.item()]}, analytics_path)
+        write_to_csv({EPOCH: [epoch + 1], STEP: [steps], LR: lr_scheduler.get_last_lr()[0], LOSS: [loss.item()]}, analytics_path)
       #print(f"Epoch: {epoch + 1} Step: {idx + 1} Loss: {loss.item()} ")
     return running_train_loss / len(train_loader)
 

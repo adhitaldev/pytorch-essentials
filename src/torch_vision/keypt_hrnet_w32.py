@@ -27,6 +27,7 @@ from torch_vision.keypt_hrnet_dataset import HRnetKeypointDetectionDataset, crea
 from torch_vision.keypt_utils import create_keypts_output_infrastructure, generate_final_analytics, load_keypts_env, EPOCH, STEP, LR, LOSS, TRAIN_LOSS, VALIDATION_LOSS, MEAN_PIXEL_ERROR, MEDIAN_PIXEL_ERROR,PRECISION, RECALL, F1_SCORE
 from utils.model_utils import write_to_csv, read_from_csv
 
+
 IN_H, IN_W = 256, 192 # Standard HRnet input dimension
 hrnet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 hrnet_std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -231,7 +232,8 @@ def prepare_key_pts_data(
                                         val_annotations_dict,
                                         val_transforms,
                                         idx_to_class,
-                                        idx_to_keypts) 
+                                        idx_to_keypts,
+                                        is_train=False) 
     
     # Data loaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)

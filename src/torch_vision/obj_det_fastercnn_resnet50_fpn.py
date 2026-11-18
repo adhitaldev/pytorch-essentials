@@ -17,11 +17,12 @@ import torchvision.transforms as transforms
 from torchvision.transforms import v2 as T
 from torchvision.io import decode_image
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from PIL import Image
 from dotenv import load_dotenv
 from utils.model_utils import get_model_classes_from_weights_meta
 from torch_vision.vision_utils import filter_object_detections, visualize_tensor_image, get_annotated_image_tensor
-from torch_vision.obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss
+from torch_vision.obj_det_utils import prepare_obj_det_data, start_obj_det_training_validation, get_validation_loss, load_objdet_env
 
 # Use this environment file in the torch_vision package for environment variables
 env_file = f".env.object_detection"
@@ -51,16 +52,21 @@ def modify_model(model, num_classes: int):
     return model
 
 def run_obj_det_training():
-  if os.path.exists(env_file):
-    load_dotenv(env_file)
-  else:
-    load_dotenv()
-    
+  """
+  Runs the object detectoin training using the FasterRCNN model
+  with the data and params defined in the .env.object_detection file.
+  """
+  load_objdet_env()
+
   # Load the model and define the classes to detect
   model, classes = load_model()
 
   # Replace the box predictor for this model
-  class_labels = ast.literal_eval(os.getenv("OBJ_DETECTION_CLASS_LABELS"))
+  print(f"Here 1")
+  class_literal = os.getenv("OBJ_DETECTION_CLASS_LABELS")
+  print(f"Class literal: {class_literal}")
+  class_labels = ast.literal_eval(class_literal)
+  print("Here 2")
   total_classes = len(class_labels) + 1 # background is zero
   modify_model(model, total_classes)
 
@@ -89,7 +95,10 @@ def run_obj_det_training():
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   num_epochs = int(os.getenv("OBJ_DETECTION_NUM_EPOCHS", 2))
   learning_rate = 1e-5
-  optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+
+  optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
+  lr_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
+  
 
   num_comparison_images = int(os.getenv("OBJ_DETECTION_COMPARISION_SAMPLES"), 5)
   score_threshold = float(os.getenv("OBJ_DETECTION_SCORE_THRESHOLD"))
@@ -101,6 +110,7 @@ def run_obj_det_training():
                                 val_loader,
                                 class_labels,
                                 optimizer,
+                                lr_scheduler,
                                 num_epochs,
                                 device,
                                 samples_to_display=num_samples,
@@ -148,7 +158,7 @@ if __name__=="__main__":
     # annotated_img_tensor = get_annotated_image_tensor(img_tensor, boxes, labels, scores, classes_to_detect, bbox_colors)
     # visualize_tensor_image(annotated_img_tensor)
 
-""""
+"""
 Resnet50_fpn architecture:
 
 FasterRCNN(
@@ -379,14 +389,4 @@ FasterRCNN(
     )
   )
 )
-
 """
-
-
-
-    
- 
-
-
-
-
